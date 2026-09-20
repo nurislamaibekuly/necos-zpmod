@@ -123,7 +123,10 @@ void ZPRoundResetPlayer(edict_t* ed) {
     pPlayer->Spawn();
 
     if (g_players[idx].originalModel[0]) {
-        ZPSetPlayerModel(ed, g_players[idx].originalModel);
+        const char* resetModel = g_players[idx].originalModel;
+        if (stricmp(resetModel, "zm") == 0)
+            resetModel = "helmet";
+        ZPSetPlayerModel(ed, resetModel);
     }
 }
 
@@ -327,6 +330,7 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
 
     player->v.team = RoleToInt(ROLE_ZOMBIE);
     player->v.viewmodel = MAKE_STRING("models/zpmod/v_claws.mdl");
+    player->v.weaponmodel = iStringNull;
     pPlayer->pev->pain_finished = gpGlobals->time;
 
     ZPSetPlayerModel(player, "zm");
@@ -716,6 +720,9 @@ void ZPPlayerThink(edict_t* player) {
 
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
+
+    // keep the crowbar's third-person worldmodel hidden, only the claw viewmodel stays
+    player->v.weaponmodel = iStringNull;
 
     int idx = ENTINDEX(player);
     if (idx < 1 || idx > gpGlobals->maxClients) return;
@@ -1136,6 +1143,8 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_GENERIC("models/zpmod/v_claws.mdl");
     PRECACHE_MODEL("models/player/zm/zm.mdl");
     PRECACHE_GENERIC("models/player/zm/zm.mdl");
+    PRECACHE_MODEL("models/player/helmet/helmet.mdl");
+    PRECACHE_GENERIC("models/player/helmet/helmet.mdl");
     PRECACHE_MODEL("sprites/laserbeam.spr");
     PRECACHE_MODEL("sprites/lgtning.spr");
 }
