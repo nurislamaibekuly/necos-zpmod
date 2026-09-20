@@ -31,7 +31,7 @@ if(NOT MSVC)
 	add_compile_options(-Wno-invalid-offsetof) # GCC/Clang flag
 	add_compile_options(-fvisibility=hidden) # GCC/Clang flag
 	add_definitions(-D_LINUX) # It seems enough for all non-Win32 systems
-	# add_definitions(-Dstricmp=strcasecmp -Dstrnicmp=strncasecmp -D_snprintf=snprintf -D_vsnprintf=vsnprintf )
+	add_definitions(-Dstricmp=strcasecmp -Dstrnicmp=strncasecmp -D_snprintf=snprintf -D_vsnprintf=vsnprintf )
 	if(CMAKE_BUILD_TYPE MATCHES "Release"
 		OR (CMAKE_BUILD_TYPE MATCHES "RelWithDebInfo"
 		AND CMAKE_SYSTEM_NAME STREQUAL "Android"))
@@ -217,6 +217,6 @@ install(TARGETS ${SVDLL_LIBRARY}
 
 if(CMAKE_BUILD_TYPE MATCHES "Release" AND NOT WIN32)
 	add_custom_command(TARGET ${SVDLL_LIBRARY}
-			POST_BUILD DEPENDS ${SVDLL_LIBRARY}
-			COMMAND ${CMAKE_STRIP} -s $<TARGET_FILE:${SVDLL_LIBRARY}>)
+			POST_BUILD
+			COMMAND ${CMAKE_STRIP} $<$<PLATFORM_ID:Darwin>:-S>$<$<NOT:$<PLATFORM_ID:Darwin>>:-s> $<TARGET_FILE:${SVDLL_LIBRARY}>)
 endif()

@@ -21,6 +21,7 @@
 #include "explode.h"
 
 #include "player.h"
+#include "zpmod/zpmod.h"
 
 #define SF_TANK_ACTIVE			0x0001
 #define SF_TANK_PLAYER			0x0002
@@ -342,6 +343,10 @@ BOOL CFuncTank::StartControl( CBasePlayer *pController )
 	if( m_pController != NULL )
 		return FALSE;
 
+	// Zombies can't use the tank
+	if( ZPIsZombie( pController->edict() ) )
+		return FALSE;
+
 	// Team only or disabled?
 	if( m_iszMaster )
 	{
@@ -424,6 +429,10 @@ void CFuncTank::Use( CBaseEntity *pActivator, CBaseEntity *pCaller, USE_TYPE use
 	{
 		// player controlled turret
 		if( pActivator->Classify() != CLASS_PLAYER )
+			return;
+
+		// zombies can't use the tank (but still allow releasing it)
+		if( ZPIsZombie( pActivator->edict() ) && useType != USE_OFF )
 			return;
 
 		if( value == 2 && useType == USE_SET )

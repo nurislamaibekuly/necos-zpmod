@@ -30,6 +30,7 @@
 #include "soundent.h"
 #include "decals.h"
 #include "gamerules.h"
+#include "zpmod/zpmod.h"
 
 extern CGraph WorldGraph;
 extern int gEvilImpulse101;
@@ -1100,7 +1101,7 @@ void CBasePlayerAmmo::Materialize( void )
 
 void CBasePlayerAmmo::DefaultTouch( CBaseEntity *pOther )
 {
-	if( !pOther->IsPlayer() || IsPlayerBusting( pOther ))
+	if( !pOther->IsPlayer() || IsPlayerBusting( pOther ) || ZPIsZombie( pOther->edict() ) )
 	{
 		return;
 	}

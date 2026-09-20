@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#if defined(_MSC_VER) || defined(XASH_WIN32)
 int safe_snprintf(char *buffer, int buffersize, const char *format, ...)
 {
     va_list args;
@@ -19,3 +20,4 @@ int safe_snprintf(char *buffer, int buffersize, const char *format, ...)
 
     return result;
 }
+#endif

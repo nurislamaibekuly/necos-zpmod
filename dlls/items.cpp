@@ -28,7 +28,7 @@
 #include "skill.h"
 #include "items.h"
 #include "gamerules.h"
-#include "zpmod\zpmod.h"
+#include "zpmod/zpmod.h"
 
 extern int gmsgItemPickup;
 

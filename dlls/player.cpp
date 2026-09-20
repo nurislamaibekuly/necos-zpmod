@@ -450,6 +450,10 @@ int CBasePlayer::TakeDamage( entvars_t *pevInflictor, entvars_t *pevAttacker, fl
 	if( !IsAlive() )
 		return 0;
 
+	// no damage before the round starts
+	if( g_round.state == RS_PREP )
+		return 0;
+
 	// go take the damage first
 	CBaseEntity *pAttacker = CBaseEntity::Instance( pevAttacker );
 
@@ -898,6 +902,14 @@ void CBasePlayer::Killed( entvars_t *pevAttacker, int iGib )
 	if( m_pActiveItem )
 		m_pActiveItem->Holster();
 
+	// a human hitting 0 hp during an active round is converted to a zombie instead of dying
+	int infector = 0;
+	if( pevAttacker && ( pevAttacker->flags & FL_CLIENT ))
+		infector = ENTINDEX( ENT( pevAttacker ) );
+
+	if( ZPDied( this->edict(), infector ) )
+		return; // converted to a zombie; the killfeed "infected" notice was already broadcast
+
 	g_pGameRules->PlayerKilled( this, pevAttacker, g_pevLastInflictor );
 
 	if( m_pTank != 0 )
@@ -911,8 +923,6 @@ void CBasePlayer::Killed( entvars_t *pevAttacker, int iGib )
 			pSound->Reset();
 		}
 	}
-
-	ZPDied(this->edict());
 
 	SetAnimation( PLAYER_DIE );
 
@@ -2617,6 +2627,9 @@ void CBasePlayer::PostThink()
 	if( !IsAlive() )
 		goto pt_end;
 
+	// Neco ZP: per-player logic (zombie charge / lunge)
+	ZPPlayerThink( edict() );
+
 	// Handle Tank controlling
 	if( m_pTank != 0 )
 	{
@@ -2932,6 +2945,11 @@ void CBasePlayer::Spawn( void )
 	m_bitsDamageType = 0;
 	m_afPhysicsFlags = 0;
 	m_fLongJump = FALSE;// no longjump module. 
+
+	m_iHideHUD = 0;
+	pev->iuser1 = 0;
+	pev->iuser2 = 0;
+	m_hObserverTarget = NULL; 
 
 	g_engfuncs.pfnSetPhysicsKeyValue( edict(), "slj", "0" );
 	g_engfuncs.pfnSetPhysicsKeyValue( edict(), "hl", "1" );

@@ -30,6 +30,7 @@
 #include "weapons.h"
 #include "func_break.h"
 #include "game.h"
+#include "zpmod/zpmod.h"
 
 extern DLL_GLOBAL Vector		g_vecAttackDir;
 extern DLL_GLOBAL int			g_iSkillLevel;
@@ -1248,6 +1249,24 @@ void CBaseEntity::TraceAttack(entvars_t *pevAttacker, float flDamage, Vector vec
 
 	CBaseEntity *pEntity = (CBaseEntity *)GET_PRIVATE(ptr->pHit);
     edict_t *pVictim = pEntity ? pEntity->edict() : nullptr;
+
+	// Neco ZP: headshot stat tracking and last-human damage boost
+	if( pVictim && pevAttacker && ( pevAttacker->flags & FL_CLIENT ) && ZPIsZombie( pVictim ) )
+	{
+		int shooterIdx = ENTINDEX( ENT( pevAttacker ) );
+		if( shooterIdx >= 1 && shooterIdx <= gpGlobals->maxClients && g_round.state == RS_ACTIVE )
+		{
+			if( ptr->iHitgroup == HITGROUP_HEAD )
+			{
+				g_players[shooterIdx].headshots++;
+				g_players[ENTINDEX( pVictim )].killedByHeadshot = true;
+			}
+			if( g_players[shooterIdx].lastHuman )
+			{
+				flDamage *= 1.5f;
+			}
+		}
+	}
 
 	if (pevAttacker->team == pev->team )
 	    return; // woah woah woah chill
