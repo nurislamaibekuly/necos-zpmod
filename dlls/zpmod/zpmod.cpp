@@ -371,11 +371,18 @@ bool ZPDied(edict_t* player, int attackerIndex) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer) return false;
 
+    // only a zombie's killing blow converts a human — suicides, fall damage
+    // and teamkills are real deaths
     if (g_round.state == RS_ACTIVE && ZPIsHuman(player)) {
-        ZPInfectPlayer(player, true);
-        ZPSendInfection(player, attackerIndex);
-        ZPOnInfect(player, attackerIndex);
-        return true;
+        if (attackerIndex >= 1 && attackerIndex <= gpGlobals->maxClients) {
+            edict_t* attacker = INDEXENT(attackerIndex);
+            if (ZPIsPlayerConnected(attacker) && ZPIsZombie(attacker)) {
+                ZPInfectPlayer(player, true);
+                ZPSendInfection(player, attackerIndex);
+                ZPOnInfect(player, attackerIndex);
+                return true;
+            }
+        }
     }
 
     if (ZPIsZombie(player)) {
@@ -421,25 +428,15 @@ void ZPZombieSwing(edict_t* player)
     CBaseEntity* pHit = ZPZombieCheckHit(pPlayer, 70.0f, &tr);
 
     if (pHit && pHit->IsPlayer() && ZPIsHuman(pHit->edict())) {
-        // ReZombie-style claw: a connecting melee hit converts the victim.
-        // Armor is the only protection — it absorbs the claw damage until it breaks.
-        float dmg = (g_players[idx].ZMClass == ZM_CLASS_REGULAR) ? 25.0f : 35.0f;
+        // ReZombie-style claw: deals 40 melee damage per hit. Armor absorbs
+        // part of it; a killing blow from a zombie converts the victim
+        // (handled in ZPDied).
+        float dmg = 40.0f;
+        pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_SLASH);
 
-        bool infected = true;
-        float armor = pHit->pev->armorvalue;
-        if (armor > 0.0f) {
-            float newArmor = armor - dmg;
-            if (newArmor < 0.0f) newArmor = 0.0f;
-            pHit->pev->armorvalue = newArmor;
-            infected = (newArmor <= 0.0f);
-        }
-
-        if (infected) {
+        // reward for landing a hit that converted the human
+        if (ZPIsZombie(pHit->edict()))
             pPlayer->pev->health += 100.0f;
-            ZPInfectPlayer(pHit->edict(), true);
-            ZPSendInfection(pHit->edict(), idx);
-            ZPOnInfect(pHit->edict(), idx);
-        }
 
         // fuckass sounds
         int r = RANDOM_LONG(1, 3);
