@@ -99,6 +99,7 @@ void ZPRoundResetPlayer(edict_t* ed) {
     g_players[idx].lastInfectTime = 0.0f;
     g_players[idx].chargeCooldown = 0.0f;
     g_players[idx].beamCooldown = 0.0f;
+    g_players[idx].clawSwing = 0;
 
     pPlayer->m_iHideHUD = 0;
     pPlayer->pev->iuser1 = 0;
@@ -335,8 +336,6 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
 
     ZPSetPlayerModel(player, "zm");
 
-    player->v.modelindex = MODEL_INDEX("models/player/zm/zm.mdl");
-    
     // UTIL_Sparks(pPlayer->pev->origin);
     MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pPlayer->pev->origin);
         WRITE_BYTE(TE_BLOODSPRITE);
@@ -424,6 +423,20 @@ void ZPZombieSwing(edict_t* player)
     int idx = ENTINDEX(player);
     if (idx < 1 || idx > gpGlobals->maxClients) return;
 
+    // play the claw swing: v_claws.mdl sequences 3-8 are the attack anims,
+    // and the body needs a swing anim too (the crafting crowbar swing is
+    // skipped entirely for zombies, so do it here)
+    static const int kClawAttacks[] = { 3, 4, 5, 6, 7, 8 };
+    int seq = kClawAttacks[g_players[idx].clawSwing % 6];
+    g_players[idx].clawSwing++;
+
+    pPlayer->pev->weaponanim = seq;
+    MESSAGE_BEGIN(MSG_ONE, SVC_WEAPONANIM, NULL, player);
+        WRITE_BYTE(seq);
+        WRITE_BYTE(0);
+    MESSAGE_END();
+    pPlayer->SetAnimation(PLAYER_ATTACK1);
+
     TraceResult tr; 
     CBaseEntity* pHit = ZPZombieCheckHit(pPlayer, 70.0f, &tr);
 
@@ -433,6 +446,11 @@ void ZPZombieSwing(edict_t* player)
         // (handled in ZPDied).
         float dmg = 40.0f;
         pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_SLASH);
+
+        // splash blood at the wound so a connecting hit reads as a hit
+        int bloodColor = pHit->BloodColor();
+        UTIL_BloodDrips(tr.vecEndPos, gpGlobals->v_forward, bloodColor, (int)dmg);
+        UTIL_BloodDecalTrace(&tr, bloodColor);
 
         // reward for landing a hit that converted the human
         if (ZPIsZombie(pHit->edict()))
@@ -453,6 +471,13 @@ void ZPZombieSwing(edict_t* player)
 
         // draw some cool motherfucking decals for example idk fuck this bullshit
         UTIL_DecalTrace(&tr, DECAL_GUNSHOT1);
+    }
+    else {
+        // clean miss: still give the swing a woosh
+        int r = RANDOM_LONG(1, 3);
+        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_1.wav", 1.0, ATTN_NORM);
+        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_2.wav", 1.0, ATTN_NORM);
+        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_3.wav", 1.0, ATTN_NORM);
     }
 }
 
@@ -636,17 +661,52 @@ void ZPRoundStopAmbient() {
     );
 }
 
-void ZPSetPlayerModel(edict_t* player, const char* modelName) {
-    if (!player || !modelName) return;
+void ZPSetPlayerModel(edict_t* player, const char* modelName)
+{
+    if (!player || player->free || !modelName || !modelName[0])
+        return;
 
-    SET_MODEL(player, modelName);
+    // modelName must be the bare folder name:
+    // "zm" -> models/player/zm/zm.mdl
+    const char* bareModel = modelName;
 
-    char cmd[128];
-    snprintf(cmd, sizeof(cmd), "model %s\n", modelName);
-    CLIENT_COMMAND(player, cmd);
-    //char debug[128];
-    //snprintf(debug, sizeof(debug), "say %s\n", modelName);
-    //CLIENT_COMMAND(player, debug);
+    // Update the player's model userinfo.
+    // This is the method used by the existing CMultiplayBusters code.
+    char* infoBuffer = g_engfuncs.pfnGetInfoKeyBuffer(player);
+
+    if (infoBuffer)
+    {
+        g_engfuncs.pfnSetClientKeyValue(
+            ENTINDEX(player),
+            infoBuffer,
+            "model",
+            bareModel
+        );
+    }
+
+    // Apply the visible model immediately.
+    char modelPath[160];
+
+    if (strcmp(bareModel, "player") == 0)
+    {
+        snprintf(
+            modelPath,
+            sizeof(modelPath),
+            "models/player.mdl"
+        );
+    }
+    else
+    {
+        snprintf(
+            modelPath,
+            sizeof(modelPath),
+            "models/player/%s/%s.mdl",
+            bareModel,
+            bareModel
+        );
+    }
+
+    SET_MODEL(player, modelPath);
 }
 
 void ZPPlayWelcomeMusic(edict_t* player) {
@@ -678,6 +738,16 @@ void ZPOnInfect(edict_t* victim, int infectorIndex) {
 
     if (infectorIndex >= 1 && infectorIndex <= gpGlobals->maxClients) {
         g_players[infectorIndex].infections++;
+
+        // credit the infecting zombie on the scoreboard. AddPoints bumps
+        // pev->frags and broadcasts ScoreInfo so everyone's scoreboard updates.
+        edict_t* infector = INDEXENT(infectorIndex);
+        if (ZPIsPlayerConnected(infector)) {
+            CBasePlayer* pInfector = (CBasePlayer*)GET_PRIVATE(infector);
+            if (pInfector) {
+                pInfector->AddPoints(1, FALSE);
+            }
+        }
     }
 }
 

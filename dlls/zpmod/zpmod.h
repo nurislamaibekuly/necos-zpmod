@@ -49,6 +49,7 @@ struct ZPPlayer {
     float lastInfectTime;
     float chargeCooldown;
     float beamCooldown;
+    int clawSwing;
 };
 
 extern ZPRound g_round;
