@@ -134,10 +134,18 @@ void ZPRoundResetPlayer(edict_t* ed) {
     }
 }
 
+static bool joinInProgress = false;
+
 void ZPPlayerJoin(edict_t* player) {
     if (!player) return;
+    if (joinInProgress) return;
+    joinInProgress = true;
+
     int idx = ENTINDEX(player);
-    if (idx < 1 || idx > gpGlobals->maxClients) return;
+    if (idx < 1 || idx > gpGlobals->maxClients) {
+        joinInProgress = false;
+        return;
+    }
 
     g_players[idx].ed = player;
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
@@ -172,6 +180,8 @@ void ZPPlayerJoin(edict_t* player) {
             pPlayer->StartObserver(pPlayer->pev->origin, pPlayer->pev->angles);
         }
     }
+
+    joinInProgress = false;
 }
 
 void ZPPlayerDisconnect(edict_t* player) {

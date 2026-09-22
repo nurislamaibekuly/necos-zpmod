@@ -4040,8 +4040,11 @@ void CBasePlayer::UpdateClientData( void )
 			MESSAGE_BEGIN( MSG_ONE, gmsgInitHUD, NULL, pev );
 			MESSAGE_END();
 
-			g_pGameRules->InitHUD( this );
+			// flag first so InitHUD driving StartObserver/RemoveAllItems
+			// can't re-enter and call InitHUD again (stack overflow)
 			m_fGameHUDInitialized = TRUE;
+
+			g_pGameRules->InitHUD( this );
 
 			m_iObserverLastMode = OBS_ROAMING;
 
