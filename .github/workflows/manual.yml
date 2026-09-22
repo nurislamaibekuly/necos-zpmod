@@ -85,7 +85,7 @@ jobs:
       if: startsWith(matrix.os, 'windows')
       run: |
         cmake -G Ninja -B build -S . -DCMAKE_BUILD_TYPE=${{ github.event.inputs.buildtype }} -DCMAKE_INSTALL_PREFIX="dist" -DUSE_VGUI=${{ github.event.inputs.usevgui }}
-        cmake --build build --target all\
+        cmake --build build --target all
         cmake --build build --target install
 
     - name: Extract branch name
