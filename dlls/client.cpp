@@ -221,7 +221,6 @@ void ClientPutInServer( edict_t *pEntity )
 
 	pPlayer->pev->iuser1 = 0;
 	pPlayer->pev->iuser2 = 0;
-	ZPPrecache();
 	ZPPlayerJoin(pEntity);
 }
 
@@ -387,6 +386,15 @@ void Host_Say( edict_t *pEntity, int teamonly )
 
 	if( !p || !p[0] || !Q_UnicodeValidate ( p ) )
 		return;  // no character found, so say nothing
+
+	// Neco ZP: "!" and "/" routed to the admin command system (!help,
+	// !auth, !kick, !slay, ...). Handled commands never hit global chat.
+	if( p[0] == '!' || p[0] == '/' )
+	{
+		player->m_flNextChatTime = gpGlobals->time + CHAT_INTERVAL;
+		if( ZPAdminCommand( pEntity, p ) )
+			return;
+	}
 
 	// turn on color set 2  (color on,  no sound)
 	if( player->IsObserver() && ( teamonly ) )
@@ -730,6 +738,11 @@ void ClientUserInfoChanged( edict_t *pEntity, char *infobuffer )
 
 static int g_serveractive = 0;
 
+// ZP mod assets must be registered once per level, before any client of that
+// level exists — precaching in ClientPutInServer pushed download lists to
+// already-connected players mid-transition and left them frozen on "Downloading".
+static bool s_zp_precached = false;
+
 void ServerDeactivate( void )
 {
 	//ALERT( at_console, "ServerDeactivate()\n" );
@@ -742,6 +755,7 @@ void ServerDeactivate( void )
 	}
 
 	g_serveractive = 0;
+	s_zp_precached = false;
 
 	// Peform any shutdown operations here...
 	//
@@ -758,6 +772,15 @@ void ServerActivate( edict_t *pEdictList, int edictCount, int clientMax )
 	g_serveractive = 1;
 
 	ZPModInit();
+
+	// Precache the ZP assets once per level, during the level setup window and
+	// before any client connects. A one-shot-per-level guard keeps it to a
+	// single call even though ServerActivate can fire more than once.
+	if( !s_zp_precached )
+	{
+		ZPPrecache();
+		s_zp_precached = true;
+	}
 
 	// Clients have not been initialized yet
 	for( i = 0; i < edictCount; i++ )

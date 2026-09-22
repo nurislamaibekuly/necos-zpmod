@@ -39,7 +39,7 @@ struct ZPRound {
 };
 
 #define ZPMAPVOTE_OPTIONS 3
-#define ZPMAPVOTE_INTERVAL 1200.0f
+#define ZPMAPVOTE_INTERVAL 2400.0f
 #define ZPMAPVOTE_LENGTH 25.0f
 
 struct ZPMapVote {
@@ -113,3 +113,10 @@ void ZPMapVoteSelect(int playerIndex, int slot);
 void ZPAbilityMenu(edict_t* player);
 void ZPAbilitySelect(int playerIndex, int slot);
 void ZPApplyZombieClass(edict_t* player);
+int RoleToInt(Role r);
+void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone);
+void ZPMakeHuman(edict_t* player);
+void ZPForceRoundEnd(int winner);
+void ZPAdminInit(void);
+bool ZPAdminCommand(edict_t* sender, const char* text);
+bool ZPAdminCheckBan(const char* name, const char* address, char reason[128]);

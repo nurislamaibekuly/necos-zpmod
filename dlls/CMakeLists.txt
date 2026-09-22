@@ -146,6 +146,7 @@ set (SVDLL_SOURCES
 	xen.cpp
 	zombie.cpp
 	zpmod/zpmod.cpp
+	zpmod/zpmod_admin.cpp
 	../game_shared/voice_gamemgr.cpp
 	../pm_shared/pm_debug.c
 	../pm_shared/pm_math.c

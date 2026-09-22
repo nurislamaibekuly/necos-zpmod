@@ -348,6 +348,11 @@ BOOL CHalfLifeMultiplay::GetNextBestWeapon( CBasePlayer *pPlayer, CBasePlayerIte
 BOOL CHalfLifeMultiplay::ClientConnected( edict_t *pEntity, const char *pszName, const char *pszAddress, char szRejectReason[128] )
 {
 	g_VoiceGameMgr.ClientConnected( pEntity );
+
+	// Neco ZP: reject banned names/ips
+	if( ZPAdminCheckBan( pszName, pszAddress, szRejectReason ) )
+		return FALSE;
+
 	return TRUE;
 }
 

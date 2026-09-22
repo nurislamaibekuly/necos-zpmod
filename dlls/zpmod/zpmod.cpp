@@ -21,6 +21,9 @@ ZPPlayer g_players[33];
 ZPMapVote g_mapVote;
 
 extern int gmsgShowMenu;
+extern int gmsgSayText;
+
+void ZPRoundWinSound(edict_t* player, const char* winSound, const char* ambientPrefix, int ambientCount);
 
 int RoleToInt(Role r) {
     switch(r) {
@@ -458,6 +461,78 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     MESSAGE_END();
 
     ZPThunderStrike(player);
+}
+
+// admins can revert a zombie back to a human
+void ZPMakeHuman(edict_t* ed) {
+    if (!ed) return;
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(ed);
+    if (!pPlayer) return;
+    int idx = ENTINDEX(ed);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+    g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].frozenUntil = 0.0f;
+    g_players[idx].lastHuman = false;
+    g_players[idx].lastInfectKiller = 0;
+
+    ed->v.team = RoleToInt(ROLE_HUMAN);
+    ed->v.deadflag = DEAD_NO;
+    ed->v.gravity = 1.0f;
+    ed->v.maxspeed = 260.0f;
+    ed->v.renderfx = kRenderFxNone;
+    ed->v.rendercolor = Vector(0, 0, 0);
+    ed->v.movetype = MOVETYPE_WALK;
+    ed->v.health = 100;
+
+    pPlayer->RemoveAllItems(false);
+    pPlayer->GiveNamedItem("weapon_crowbar");
+    pPlayer->GiveNamedItem("weapon_9mmhandgun");
+    pPlayer->GiveNamedItem("ammo_9mmclip");
+    pPlayer->SelectItem("weapon_9mmhandgun");
+
+    if (g_players[idx].originalModel[0]) {
+        const char* m = g_players[idx].originalModel;
+        if (stricmp(m, "zm") == 0) m = "helmet";
+        ZPSetPlayerModel(ed, m);
+    }
+
+    UTIL_ScreenFade(pPlayer, Vector(0, 255, 120), 0.4f, 0.2f, 255, FFADE_IN);
+}
+
+// forces the current round to end with a chosen winner (0 = draw, 1 = humans, 2 = zombies)
+void ZPForceRoundEnd(int winner) {
+    if (g_round.state == RS_PREP) return;
+
+    g_round.resetTime = gpGlobals->time + 5.0f;
+
+    if (winner == 2) {
+        g_round.state = RS_ZOMBIES_WIN;
+        UTIL_ClientPrintAll(HUD_PRINTCENTER, "Zombies win\n");
+        for (int i = 1; i <= gpGlobals->maxClients; i++) {
+            edict_t* ed = INDEXENT(i);
+            if (ZPIsPlayerConnected(ed) && ed->v.health > 0)
+                ZPRoundWinSound(ed, "zpmod/win_zombi.wav", "zpmod/win_zombi", 3);
+        }
+    } else if (winner == 1) {
+        g_round.state = RS_HUMANS_WIN;
+        UTIL_ClientPrintAll(HUD_PRINTCENTER, "Humans win\n");
+        for (int i = 1; i <= gpGlobals->maxClients; i++) {
+            edict_t* ed = INDEXENT(i);
+            if (ZPIsPlayerConnected(ed) && ed->v.health > 0)
+                ZPRoundWinSound(ed, "zpmod/win_human.wav", "zpmod/win_human", 2);
+        }
+    } else {
+        g_round.state = RS_ROUND_DRAW;
+        UTIL_ClientPrintAll(HUD_PRINTCENTER, "Round draw\n");
+        for (int i = 1; i <= gpGlobals->maxClients; i++) {
+            edict_t* ed = INDEXENT(i);
+            if (ZPIsPlayerConnected(ed) && ed->v.health > 0)
+                EMIT_SOUND(ed, CHAN_AUTO, "zpmod/round_draw.wav", 1.0, ATTN_NORM);
+        }
+    }
+
+    ZPAnnounceMvp();
 }
 
 CBaseEntity* ZPZombieCheckHit(CBasePlayer* pPlayer, float range, TraceResult* ptr)
@@ -1567,6 +1642,17 @@ void ZPRoundThink(ZPRound* round) {
             if (ZPIsHuman(e)) {
                 bool isLast = (humans == 1 && i == lastHuman);
                 g_players[i].lastHuman = isLast;
+
+                // admin freeze overlays movement for humans too
+                if (g_players[i].frozenUntil > gpGlobals->time) {
+                    pp->pev->movetype = MOVETYPE_NONE;
+                    pp->pev->velocity = Vector(0, 0, 0);
+                    pp->pev->gravity = 0.0f;
+                    continue;
+                }
+
+                pp->pev->movetype = MOVETYPE_WALK;
+                pp->pev->gravity = 1.0f;
                 pp->pev->maxspeed = isLast ? 300.0f : 260.0f;
                 // adrenaline burst temporarily lifts human speed
                 if (g_players[i].adrenalineUntil > gpGlobals->time)
@@ -1694,6 +1780,7 @@ void ZPModInit(void) {
     memset(g_players, 0, sizeof(g_players));
     ZPRoundInit(&g_round);
     ZPMapVoteReset();
+    ZPAdminInit();
     g_engfuncs.pfnAddServerCommand("zpmod_restart", ZPRoundRestart);
 
     for (int i = 1; i <= gpGlobals->maxClients; i++) {
