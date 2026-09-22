@@ -19,6 +19,9 @@ enum Role {
 
 enum ZMClasses {
     ZM_CLASS_REGULAR,
+    ZM_CLASS_FAST,
+    ZM_CLASS_TANK,
+    ZM_CLASS_JUMPER,
     ZM_CLASS_BOSS
 };
 
@@ -64,6 +67,13 @@ struct ZPPlayer {
     float chargeCooldown;
     float beamCooldown;
     int clawSwing;
+    int aimTarget;
+    float healCooldown;
+    float adrenalineCooldown;
+    float adrenalineUntil;
+    float frostCooldown;
+    float abilityMenuUntil;
+    float frozenUntil;
 };
 
 extern ZPRound g_round;
@@ -100,3 +110,6 @@ void ZPMapVoteReset(void);
 void ZPMapVoteOpen(void);
 void ZPMapVoteThink(void);
 void ZPMapVoteSelect(int playerIndex, int slot);
+void ZPAbilityMenu(edict_t* player);
+void ZPAbilitySelect(int playerIndex, int slot);
+void ZPApplyZombieClass(edict_t* player);

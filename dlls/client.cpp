@@ -615,7 +615,14 @@ void ClientCommand( edict_t *pEntity )
 	}
 	else if( FStrEq( pcmd, "menuselect" ) )
 	{
-		ZPMapVoteSelect( ENTINDEX( pEntity ), atoi( CMD_ARGV( 1 ) ) );
+		int slot = atoi( CMD_ARGV( 1 ) );
+
+		// map vote menu takes priority while active
+		if (g_mapVote.active) {
+			ZPMapVoteSelect( ENTINDEX( pEntity ), slot );
+		} else {
+			ZPAbilitySelect( ENTINDEX( pEntity ), slot );
+		}
 	}
 	else if( FStrEq( pcmd, "follownext" ) )	// follow next player
 	{

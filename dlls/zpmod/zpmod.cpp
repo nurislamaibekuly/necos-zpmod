@@ -103,6 +103,18 @@ void ZPRoundResetPlayer(edict_t* ed) {
     g_players[idx].chargeCooldown = 0.0f;
     g_players[idx].beamCooldown = 0.0f;
     g_players[idx].clawSwing = 0;
+    g_players[idx].healCooldown = 0.0f;
+    g_players[idx].adrenalineCooldown = 0.0f;
+    g_players[idx].adrenalineUntil = 0.0f;
+    g_players[idx].frostCooldown = 0.0f;
+    g_players[idx].abilityMenuUntil = 0.0f;
+    g_players[idx].frozenUntil = 0.0f;
+    g_players[idx].aimTarget = 0;
+
+    // clear any class glow/freeze tint from the previous round
+    ed->v.renderfx = kRenderFxNone;
+    ed->v.rendercolor = Vector(0, 0, 0);
+    ed->v.movetype = MOVETYPE_WALK;
 
     pPlayer->m_iHideHUD = 0;
     pPlayer->pev->iuser1 = 0;
@@ -283,6 +295,59 @@ void ZPThunderStrike(edict_t* player) {
     UTIL_ScreenFade(pPlayer, white, 0.15f, 0.05f, 255, FFADE_IN);
 }
 
+const char* ZMClassName(int cls) {
+    switch (cls) {
+        case ZM_CLASS_FAST:   return "FAST ZOMBIE";
+        case ZM_CLASS_TANK:   return "TANK ZOMBIE";
+        case ZM_CLASS_JUMPER: return "JUMPER ZOMBIE";
+        case ZM_CLASS_BOSS:   return "BOSS ZOMBIE";
+        default:              return "ZOMBIE";
+    }
+}
+
+// applies per-class speed/gravity/render every frame for zombies so nothing
+// can override them; frozen zombies get locked in place with a blue tint
+void ZPApplyZombieClass(edict_t* player)
+{
+    if (!player) return;
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+    int cls = g_players[idx].ZMClass;
+
+    float speed = 240.0f, gravity = 0.8f;
+    switch (cls) {
+        case ZM_CLASS_FAST:    speed = 320.0f; gravity = 0.8f;  break;
+        case ZM_CLASS_TANK:    speed = 205.0f; gravity = 1.0f;  break;
+        case ZM_CLASS_JUMPER:  speed = 250.0f; gravity = 0.42f; break;
+        case ZM_CLASS_BOSS:    speed = 240.0f; gravity = 0.8f;  break;
+        default:               speed = 240.0f; gravity = 0.8f;  break;
+    }
+
+    if (g_players[idx].frozenUntil > gpGlobals->time) {
+        player->v.movetype = MOVETYPE_NONE;
+        player->v.velocity = Vector(0, 0, 0);
+        player->v.gravity = 0.0f;
+        player->v.renderfx = kRenderFxGlowShell;
+        player->v.rendercolor = Vector(120, 200, 255);
+        player->v.renderamt = 70;
+        return;
+    }
+
+    player->v.movetype = MOVETYPE_WALK;
+    player->v.maxspeed = speed;
+    player->v.gravity = gravity;
+    player->v.renderfx = kRenderFxGlowShell;
+    player->v.renderamt = cls == ZM_CLASS_BOSS ? 80 : cls == ZM_CLASS_TANK ? 70 : 45;
+    switch (cls) {
+        case ZM_CLASS_FAST:    player->v.rendercolor = Vector(30, 220, 255);  break;
+        case ZM_CLASS_TANK:    player->v.rendercolor = Vector(255, 140, 20);  break;
+        case ZM_CLASS_JUMPER:  player->v.rendercolor = Vector(80, 255, 70);   break;
+        case ZM_CLASS_BOSS:    player->v.rendercolor = Vector(255, 15, 30);   break;
+        default:               player->v.rendercolor = Vector(255, 40, 40);   break;
+    }
+}
+
 void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer) return;
@@ -297,6 +362,12 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
         g_players[idx].ZMClass = ZM_CLASS_BOSS;
         EMIT_SOUND(player, CHAN_AUTO, "ambience/the_horror3.wav", 1.0, ATTN_NONE);
     } else {
+        r = RANDOM_LONG(1, 4);
+        if (r == 1) g_players[idx].ZMClass = ZM_CLASS_FAST;
+        else if (r == 2) g_players[idx].ZMClass = ZM_CLASS_TANK;
+        else if (r == 3) g_players[idx].ZMClass = ZM_CLASS_JUMPER;
+        else g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+
         r = RANDOM_LONG(1, 2);
         if (r == 1) {
             EMIT_SOUND(player, CHAN_AUTO, "zpmod/coming_1.wav", 1.0, 0.2f);
@@ -315,13 +386,18 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
 
     // zombie stuff
     pPlayer->pev->deadflag = DEAD_NO;
-    player->v.health = 500;
-    player->v.gravity = 0.8f;
 
-    if (g_players[idx].ZMClass == ZM_CLASS_BOSS) {
-        player->v.health = 4000;
-        // player->v.gravity = 0.2f;
+    float clsHp = 500.0f;
+    switch (g_players[idx].ZMClass) {
+        case ZM_CLASS_FAST:   clsHp = 350.0f; break;
+        case ZM_CLASS_TANK:   clsHp = 900.0f; break;
+        case ZM_CLASS_JUMPER: clsHp = 400.0f; break;
+        case ZM_CLASS_BOSS:   clsHp = 4000.0f; break;
+        default:              clsHp = 500.0f; break;
     }
+    player->v.health = clsHp;
+
+    ZPApplyZombieClass(player);
 
     hudtextparms_t params;
     memset(&params, 0, sizeof(params));
@@ -337,6 +413,26 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     params.fadeoutTime = 0.3f;
     params.holdTime = 4.0f;
     if (g_players[idx].ZMClass == ZM_CLASS_BOSS) UTIL_HudMessageAll(params, msg);
+
+    // class announce to the freshly infected player
+    char clsMsg[48];
+    snprintf(clsMsg, sizeof(clsMsg), "YOU ARE A %s", ZMClassName(g_players[idx].ZMClass));
+    params.y = 0.15f;
+    if (g_players[idx].ZMClass == ZM_CLASS_BOSS) {
+        params.r1 = 255; params.g1 = 0; params.b1 = 255;
+    } else if (g_players[idx].ZMClass == ZM_CLASS_TANK) {
+        params.r1 = 255; params.g1 = 140; params.b1 = 20;
+    } else if (g_players[idx].ZMClass == ZM_CLASS_JUMPER) {
+        params.r1 = 80; params.g1 = 255; params.b1 = 70;
+    } else if (g_players[idx].ZMClass == ZM_CLASS_FAST) {
+        params.r1 = 30; params.g1 = 220; params.b1 = 255;
+    } else {
+        params.r1 = 255; params.g1 = 40; params.b1 = 40;
+    }
+    UTIL_HudMessage(CBaseEntity::Instance(player), params, clsMsg);
+
+    // red infection burst — heavier for the boss
+    UTIL_ParticleEffect(pPlayer->pev->origin + Vector(0, 0, 32), Vector(0, 0, 96), 235, g_players[idx].ZMClass == ZM_CLASS_BOSS ? 60 : 30);
 
     pPlayer->RemoveAllItems(false);
     pPlayer->GiveNamedItem("weapon_crowbar");
@@ -409,6 +505,23 @@ bool ZPDied(edict_t* player, int attackerIndex) {
             edict_t* killer = INDEXENT(attackerIndex);
             if (ZPIsPlayerConnected(killer) && ZPIsHuman(killer)) {
                 ZPKillReward(killer, headshot);
+
+                // headshot blast: white flash + sparks at the brain
+                if (headshot) {
+                    Vector head = pPlayer->pev->origin + Vector(0, 0, 36);
+                    UTIL_Sparks(head);
+                    MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, head);
+                        WRITE_BYTE(TE_DLIGHT);
+                        WRITE_COORD(head.x); WRITE_COORD(head.y); WRITE_COORD(head.z);
+                        WRITE_BYTE(32);   // radius
+                        WRITE_BYTE(255);  // r
+                        WRITE_BYTE(255);  // g
+                        WRITE_BYTE(255);  // b
+                        WRITE_BYTE(10);   // life
+                        WRITE_BYTE(6);    // decay
+                    MESSAGE_END();
+                    UTIL_ScreenFade((CBaseEntity*)GET_PRIVATE(killer), Vector(255, 255, 255), 0.2f, 0.1f, 255, FFADE_IN);
+                }
             }
         }
     }
@@ -435,6 +548,7 @@ void ZPZombieSwing(edict_t* player)
     if (!pPlayer) return;
     int idx = ENTINDEX(player);
     if (idx < 1 || idx > gpGlobals->maxClients) return;
+    if (g_players[idx].frozenUntil > gpGlobals->time) return;
 
     // play the claw swing: v_claws.mdl sequences 3-8 are the attack anims,
     // and the body needs a swing anim too (the crafting crowbar swing is
@@ -454,10 +568,17 @@ void ZPZombieSwing(edict_t* player)
     CBaseEntity* pHit = ZPZombieCheckHit(pPlayer, 70.0f, &tr);
 
     if (pHit && pHit->IsPlayer() && ZPIsHuman(pHit->edict())) {
-        // ReZombie-style claw: deals 40 melee damage per hit. Armor absorbs
-        // part of it; a killing blow from a zombie converts the victim
-        // (handled in ZPDied).
+        // ReZombie-style claw: deals melee damage per hit (class-dependent).
+        // Armor absorbs part of it; a killing blow from a zombie converts the
+        // victim (handled in ZPDied).
         float dmg = 40.0f;
+        switch (g_players[idx].ZMClass) {
+            case ZM_CLASS_FAST:   dmg = 30.0f; break;
+            case ZM_CLASS_TANK:   dmg = 55.0f; break;
+            case ZM_CLASS_JUMPER: dmg = 32.0f; break;
+            case ZM_CLASS_BOSS:   dmg = 60.0f; break;
+            default:              dmg = 40.0f; break;
+        }
         pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_SLASH);
 
         // splash blood at the wound so a connecting hit reads as a hit
@@ -511,6 +632,83 @@ void ZPCountTeams(int& humans, int& zombies)
         if (ZPIsZombie(e)) zombies++;
         else if (ZPIsHuman(e)) humans++;
     }
+}
+
+// shows the name and health of the player under the crosshair, centered a bit below the middle
+// color depends on the target's role: zombie red, boss magenta, human green, spectator gray
+void ZPPlayerAimDisplay(edict_t* player) {
+    if (!player) return;
+
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+    if (!pPlayer || !pPlayer->IsPlayer()) return;
+
+    int target = 0;
+
+    if (pPlayer->IsAlive()) {
+        UTIL_MakeVectors(pPlayer->pev->v_angle);
+        Vector eye = pPlayer->pev->origin + pPlayer->pev->view_ofs;
+        Vector end = eye + gpGlobals->v_forward * 512.0f;
+
+        TraceResult tr;
+        UTIL_TraceLine(eye, end, dont_ignore_monsters, player, &tr);
+
+        if (!FNullEnt(tr.pHit)) {
+            CBaseEntity* pHit = CBaseEntity::Instance(tr.pHit);
+            if (pHit && pHit->IsPlayer()) {
+                int t = ENTINDEX(tr.pHit);
+                if (t >= 1 && t <= gpGlobals->maxClients && t != idx && ZPIsPlayerConnected(INDEXENT(t)))
+                    target = t;
+            }
+        }
+    }
+
+    int prev = g_players[idx].aimTarget;
+    if (target == 0 && prev == 0)
+        return;
+
+    g_players[idx].aimTarget = target;
+
+    hudtextparms_t aim;
+    memset(&aim, 0, sizeof(aim));
+    aim.channel = 0;
+    aim.x = -1;
+    aim.y = 0.55f;
+    aim.r1 = aim.g1 = aim.b1 = 255;
+    aim.a1 = 255;
+    aim.fadeinTime = 0;
+    aim.fadeoutTime = 0;
+    aim.holdTime = 0.5f;
+
+    if (target == 0) {
+        UTIL_HudMessage(CBaseEntity::Instance(player), aim, "");
+        return;
+    }
+
+    edict_t* ed = INDEXENT(target);
+    int hp = (int)ed->v.health;
+    if (hp < 0) hp = 0;
+
+    if (ZPIsZombie(ed)) {
+        if (g_players[target].ZMClass == ZM_CLASS_BOSS) {
+            aim.r1 = 255; aim.g1 = 60; aim.b1 = 200;
+        } else {
+            aim.r1 = 255; aim.g1 = 40; aim.b1 = 40;
+        }
+    } else if (ed->v.team == RoleToInt(ROLE_SPECTATOR)) {
+        aim.r1 = aim.g1 = aim.b1 = 190;
+    } else {
+        aim.r1 = 40; aim.g1 = 255; aim.b1 = 90;
+    }
+
+    const char* name = STRING(ed->v.netname);
+    if (!name) name = "player";
+
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%s\nHP  %d", name, hp);
+    UTIL_HudMessage(CBaseEntity::Instance(player), aim, buf);
 }
 
 void ZPHUD()
@@ -606,8 +804,7 @@ void ZPHUD()
         if (hp < 0) hp = 0;
         const char* className = "Human";
         if (ZPIsZombie(ed)) {
-            className = "Zombie";
-            if (g_players[i].ZMClass == ZM_CLASS_BOSS) className = "Boss Zombie";
+            className = ZMClassName(g_players[i].ZMClass);
         }
         else if (ed->v.team == RoleToInt(ROLE_SPECTATOR)) className = "Spectator";
 
@@ -633,6 +830,8 @@ void ZPHUD()
         }
 
         UTIL_HudMessage(CBaseEntity::Instance(ed), info, buf);
+
+        ZPPlayerAimDisplay(ed);
     }
 }
 
@@ -796,30 +995,157 @@ void ZPKillReward(edict_t* killer, bool fromHeadshot) {
 
 void ZPPlayerThink(edict_t* player) {
     if (!player) return;
-    if (!ZPIsZombie(player)) return;
+    if (!ZPIsPlayerConnected(player)) return;
 
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
 
-    // keep the crowbar's third-person worldmodel hidden, only the claw viewmodel stays
-    player->v.weaponmodel = iStringNull;
-
-    int idx = ENTINDEX(player);
-    if (idx < 1 || idx > gpGlobals->maxClients) return;
     if (g_round.state != RS_ACTIVE) return;
-    if (g_players[idx].chargeCooldown > gpGlobals->time) return;
-    if (!(pPlayer->m_afButtonPressed & IN_ATTACK2)) return;
 
-    UTIL_MakeVectors(pPlayer->pev->v_angle);
-    Vector dir = gpGlobals->v_forward;
-    dir.z = 0;
-    if (dir.Length() < 0.1f) return;
+    if (ZPIsZombie(player)) {
+        // keep the crowbar's third-person worldmodel hidden, only the claw viewmodel stays
+        player->v.weaponmodel = iStringNull;
 
-    pPlayer->pev->velocity = dir * 750.0f + Vector(0, 0, 220);
-    g_players[idx].chargeCooldown = gpGlobals->time + 6.0f;
+        int idx = ENTINDEX(player);
+        if (idx < 1 || idx > gpGlobals->maxClients) return;
+        if (g_players[idx].frozenUntil > gpGlobals->time) return;
+        if (g_players[idx].chargeCooldown > gpGlobals->time) return;
+        if (!(pPlayer->m_afButtonPressed & IN_ATTACK2)) return;
 
-    EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0, ATTN_NORM);
-    UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
+        UTIL_MakeVectors(pPlayer->pev->v_angle);
+        Vector dir = gpGlobals->v_forward;
+        dir.z = 0;
+        if (dir.Length() < 0.1f) return;
+
+        pPlayer->pev->velocity = dir * 750.0f + Vector(0, 0, 220);
+        g_players[idx].chargeCooldown = gpGlobals->time + 6.0f;
+
+        EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0, ATTN_NORM);
+        UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
+        return;
+    }
+
+    // human kit: press +use (E) to open the ability menu
+    if (ZPIsHuman(player) && (pPlayer->m_afButtonPressed & IN_USE))
+        ZPAbilityMenu(player);
+}
+
+void ZPAbilityMenu(edict_t* player)
+{
+    if (!player) return;
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+    if (!pPlayer || !pPlayer->IsAlive()) return;
+    int idx = ENTINDEX(player);
+
+    // the map vote owns menuselect while it is running
+    if (g_mapVote.active) return;
+
+    int bits = 0;
+    if (g_players[idx].healCooldown <= gpGlobals->time) bits |= (1 << 0);
+    if (g_players[idx].adrenalineCooldown <= gpGlobals->time) bits |= (1 << 1);
+    if (g_players[idx].frostCooldown <= gpGlobals->time) bits |= (1 << 2);
+
+    if (bits == 0) {
+        hudtextparms_t cd;
+        memset(&cd, 0, sizeof(cd));
+        cd.channel = 0;
+        cd.x = -1;
+        cd.y = 0.3f;
+        cd.r1 = cd.g1 = cd.b1 = 255;
+        cd.a1 = 255;
+        cd.fadeinTime = 0.05f;
+        cd.fadeoutTime = 0.3f;
+        cd.holdTime = 1.0f;
+        UTIL_HudMessage(CBaseEntity::Instance(player), cd, "ALL ABILITIES ON COOLDOWN");
+        return;
+    }
+
+    MESSAGE_BEGIN(MSG_ONE, gmsgShowMenu, NULL, player);
+        WRITE_SHORT(bits);
+        WRITE_CHAR(-1);   // display until a key is pressed
+        WRITE_BYTE(1);    // keep the menu up on click
+        WRITE_STRING("HUMAN ABILITIES\n\n1. Heal +50 HP\n2. Adrenaline (6s speed)\n3. Frost Nova (freeze)");
+    MESSAGE_END();
+
+    g_players[idx].abilityMenuUntil = gpGlobals->time + 6.0f;
+}
+
+void ZPAbilitySelect(int playerIndex, int slot)
+{
+    if (playerIndex < 1 || playerIndex > gpGlobals->maxClients) return;
+    if (g_players[playerIndex].abilityMenuUntil < gpGlobals->time) return;
+
+    edict_t* ed = INDEXENT(playerIndex);
+    if (!ZPIsPlayerConnected(ed)) return;
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(ed);
+    if (!pPlayer || !pPlayer->IsAlive()) return;
+    if (g_round.state != RS_ACTIVE || !ZPIsHuman(ed)) return;
+
+    g_players[playerIndex].abilityMenuUntil = 0;
+
+    hudtextparms_t fb;
+    memset(&fb, 0, sizeof(fb));
+    fb.channel = 0;
+    fb.x = -1;
+    fb.y = 0.3f;
+    fb.a1 = 255;
+    fb.fadeinTime = 0.05f;
+    fb.fadeoutTime = 0.4f;
+    fb.holdTime = 1.2f;
+
+    char fmsg[64];
+
+    if (slot == 1 && g_players[playerIndex].healCooldown <= gpGlobals->time) {
+        pPlayer->pev->health += 50.0f;
+        if (pPlayer->pev->health > 100.0f) pPlayer->pev->health = 100.0f;
+        g_players[playerIndex].healCooldown = gpGlobals->time + 25.0f;
+
+        EMIT_SOUND(ed, CHAN_ITEM, "items/smallmedkit1.wav", 1.0, ATTN_NORM);
+        UTIL_ParticleEffect(pPlayer->pev->origin + Vector(0, 0, 40), Vector(0, 0, 70), 80, 24);
+        UTIL_ScreenFade(pPlayer, Vector(80, 255, 90), 0.4f, 0.2f, 255, FFADE_IN);
+
+        fb.r1 = 80; fb.g1 = 255; fb.b1 = 90;
+        snprintf(fmsg, sizeof(fmsg), "HEALED +50 HP");
+    } else if (slot == 2 && g_players[playerIndex].adrenalineCooldown <= gpGlobals->time) {
+        g_players[playerIndex].adrenalineCooldown = gpGlobals->time + 30.0f;
+        g_players[playerIndex].adrenalineUntil = gpGlobals->time + 6.0f;
+
+        EMIT_SOUND(ed, CHAN_ITEM, "items/suitchargeno1.wav", 1.0, ATTN_NORM);
+        UTIL_ParticleEffect(pPlayer->pev->origin + Vector(0, 0, 40), Vector(0, 0, 80), 14, 30);
+        UTIL_ScreenFade(pPlayer, Vector(255, 210, 80), 0.3f, 0.1f, 255, FFADE_IN);
+
+        fb.r1 = 255; fb.g1 = 200; fb.b1 = 60;
+        snprintf(fmsg, sizeof(fmsg), "ADRENALINE +6s SPEED");
+    } else if (slot == 3 && g_players[playerIndex].frostCooldown <= gpGlobals->time) {
+        g_players[playerIndex].frostCooldown = gpGlobals->time + 45.0f;
+
+        Vector origin = pPlayer->pev->origin;
+        for (int i = 1; i <= gpGlobals->maxClients; i++) {
+            edict_t* e = INDEXENT(i);
+            if (!ZPIsPlayerConnected(e) || !ZPIsZombie(e)) continue;
+            if (g_players[i].ZMClass == ZM_CLASS_BOSS) continue;
+            CBasePlayer* pz = (CBasePlayer*)GET_PRIVATE(e);
+            if (!pz || !pz->IsAlive()) continue;
+            if ((pz->pev->origin - origin).Length() > 480.0f) continue;
+
+            g_players[i].frozenUntil = gpGlobals->time + 4.0f;
+            pz->pev->velocity = Vector(0, 0, 0);
+            EMIT_SOUND(e, CHAN_ITEM, "debris/bustmetal2.wav", 1.0, ATTN_NORM);
+            UTIL_ScreenFade(pz, Vector(120, 200, 255), 0.4f, 0.2f, 255, FFADE_IN);
+            UTIL_ParticleEffect(pz->pev->origin + Vector(0, 0, 32), Vector(0, 0, 20), 140, 16);
+        }
+
+        UTIL_ScreenShake(origin, 9.0f, 4.0f, 0.6f, 320.0f);
+        UTIL_ParticleEffect(origin + Vector(0, 0, 32), Vector(0, 0, 120), 140, 40);
+        EMIT_SOUND(ed, CHAN_WEAPON, "debris/bustmetal1.wav", 1.0, ATTN_NORM);
+
+        fb.r1 = 120; fb.g1 = 200; fb.b1 = 255;
+        snprintf(fmsg, sizeof(fmsg), "FROST NOVA");
+    } else {
+        return;
+    }
+
+    UTIL_HudMessage(CBaseEntity::Instance(ed), fb, fmsg);
 }
 
 void ZPFreezePlayers(bool freeze) {
@@ -1242,8 +1568,13 @@ void ZPRoundThink(ZPRound* round) {
                 bool isLast = (humans == 1 && i == lastHuman);
                 g_players[i].lastHuman = isLast;
                 pp->pev->maxspeed = isLast ? 300.0f : 260.0f;
+                // adrenaline burst temporarily lifts human speed
+                if (g_players[i].adrenalineUntil > gpGlobals->time)
+                    pp->pev->maxspeed = 335.0f;
             } else {
                 g_players[i].lastHuman = false;
+                // keep class stats applied every frame (freeze handled inside)
+                ZPApplyZombieClass(e);
             }
         }
 
@@ -1410,6 +1741,10 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/death_1.wav");
     PRECACHE_SOUND("zpmod/death_2.wav");
     PRECACHE_SOUND("ambience/the_horror3.wav");
+    PRECACHE_SOUND("items/smallmedkit1.wav");
+    PRECACHE_SOUND("items/suitchargeno1.wav");
+    PRECACHE_SOUND("debris/bustmetal1.wav");
+    PRECACHE_SOUND("debris/bustmetal2.wav");
 
     PRECACHE_MODEL("models/zpmod/v_claws.mdl");
     PRECACHE_GENERIC("models/zpmod/v_claws.mdl");
