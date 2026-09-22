@@ -462,16 +462,16 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "noclip")) {
-        if (sender->v.movetype == MOVETYPE_NOCLIP) {
-            sender->v.movetype = MOVETYPE_WALK;
-            sender->v.gravity = 1.0f;
-            sender->v.velocity = Vector(0, 0, 0);
-            ZPAdminMsg(sender, "[Admin] Noclip off");
-        } else {
+        g_players[idx].noclip = !g_players[idx].noclip;
+        sender->v.velocity = Vector(0, 0, 0);
+        if (g_players[idx].noclip) {
             sender->v.movetype = MOVETYPE_NOCLIP;
             sender->v.gravity = 0.0f;
-            sender->v.velocity = Vector(0, 0, 0);
             ZPAdminMsg(sender, "[Admin] Noclip on");
+        } else {
+            sender->v.movetype = MOVETYPE_WALK;
+            sender->v.gravity = 1.0f;
+            ZPAdminMsg(sender, "[Admin] Noclip off");
         }
         return true;
     }

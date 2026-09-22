@@ -74,6 +74,7 @@ struct ZPPlayer {
     float frostCooldown;
     float abilityMenuUntil;
     float frozenUntil;
+    bool noclip;
 };
 
 extern ZPRound g_round;

@@ -468,6 +468,7 @@ cvar_t sv_busters = { "sv_busters", "0" };
 cvar_t sv_headshot = { "sv_headshot", "1", FCVAR_SERVER };
 
 extern cvar_t zp_admin_pass;
+extern cvar_t zpmod_advertisementenabled;
 
 // Register your console variables here
 // This gets called one time when the game is initialied
@@ -485,6 +486,7 @@ void GameDLLInit( void )
 	CVAR_REGISTER( &sv_headshot );
 
 	CVAR_REGISTER( &zp_admin_pass );
+	CVAR_REGISTER( &zpmod_advertisementenabled );
 
 	CVAR_REGISTER( &build_commit );
 	CVAR_REGISTER( &build_branch );

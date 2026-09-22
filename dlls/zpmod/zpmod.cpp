@@ -22,6 +22,7 @@ ZPMapVote g_mapVote;
 
 extern int gmsgShowMenu;
 extern int gmsgSayText;
+extern int gmsgTextMsg;
 
 void ZPRoundWinSound(edict_t* player, const char* winSound, const char* ambientPrefix, int ambientCount);
 
@@ -113,6 +114,7 @@ void ZPRoundResetPlayer(edict_t* ed) {
     g_players[idx].abilityMenuUntil = 0.0f;
     g_players[idx].frozenUntil = 0.0f;
     g_players[idx].aimTarget = 0;
+    g_players[idx].noclip = false;
 
     // clear any class glow/freeze tint from the previous round
     ed->v.renderfx = kRenderFxNone;
@@ -337,6 +339,21 @@ void ZPApplyZombieClass(edict_t* player)
         return;
     }
 
+    if (g_players[idx].noclip) {
+        player->v.movetype = MOVETYPE_NOCLIP;
+        player->v.gravity = 0.0f;
+        player->v.renderfx = kRenderFxGlowShell;
+        player->v.renderamt = cls == ZM_CLASS_BOSS ? 80 : cls == ZM_CLASS_TANK ? 70 : 45;
+        switch (cls) {
+            case ZM_CLASS_FAST:    player->v.rendercolor = Vector(30, 220, 255);  break;
+            case ZM_CLASS_TANK:    player->v.rendercolor = Vector(255, 140, 20);  break;
+            case ZM_CLASS_JUMPER:  player->v.rendercolor = Vector(80, 255, 70);   break;
+            case ZM_CLASS_BOSS:    player->v.rendercolor = Vector(255, 15, 30);   break;
+            default:               player->v.rendercolor = Vector(255, 40, 40);   break;
+        }
+        return;
+    }
+
     player->v.movetype = MOVETYPE_WALK;
     player->v.maxspeed = speed;
     player->v.gravity = gravity;
@@ -349,6 +366,31 @@ void ZPApplyZombieClass(edict_t* player)
         case ZM_CLASS_BOSS:    player->v.rendercolor = Vector(255, 15, 30);   break;
         default:               player->v.rendercolor = Vector(255, 40, 40);   break;
     }
+}
+
+// shared overlay for humans (admin noclip / freeze) so movement stays stable
+// during an active round without stomping the class logic
+void ZPApplyHumanOverlay(edict_t* player)
+{
+    if (!player) return;
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+    if (g_players[idx].frozenUntil > gpGlobals->time) {
+        player->v.movetype = MOVETYPE_NONE;
+        player->v.velocity = Vector(0, 0, 0);
+        player->v.gravity = 0.0f;
+        return;
+    }
+
+    if (g_players[idx].noclip) {
+        player->v.movetype = MOVETYPE_NOCLIP;
+        player->v.gravity = 0.0f;
+        return;
+    }
+
+    player->v.movetype = MOVETYPE_WALK;
+    player->v.gravity = 1.0f;
 }
 
 void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
@@ -1486,8 +1528,47 @@ void ZPMapVoteSelect(int playerIndex, int slot) {
     g_mapVote.votes[slot - 1] += 1;
 }
 
+cvar_t zpmod_advertisementenabled = { "zpmod_advertisementenabled", "0", FCVAR_SERVER };
+
+static const char* const kZPAds[] = {
+    "^3[zp] ^7don't forget to join our discord: ^4necois.fun/discord",
+    "^6[zp] ^7got a suggestion or found a bug? let us know: ^4necois.fun/discord",
+    "^2[zp] ^7new maps, classes and updates are coming, join us: ^4necois.fun/discord",
+    "^5[zp] ^7bring your friends and join the chaos: ^4necois.fun/discord",
+    "^1[zp] ^7need help or want to report someone? ^4necois.fun/discord",
+    "^3[zp] ^7wanna keep up with the server? join our discord: ^4necois.fun/discord",
+    "^6[zp] ^7found something broken? tell us before it eats the server: ^4necois.fun/discord",
+    "^2[zp] ^7we're working on new stuff, come hang out: ^4necois.fun/discord",
+    "^5[zp] ^7got friends who think they can survive? bring them: ^4necois.fun/discord",
+    "^1[zp] ^7server updates and random chaos live here: ^4necois.fun/discord"
+};
+static int s_adIndex = 0;
+static float s_nextAdvertTime = 0.0f;
+
+// rotates through kZPAds in chat every 3-5 min; enabled via
+// zpmod_advertisementenabled (default off)
+void ZPAdvertThink(void) {
+    cvar_t* enabled = CVAR_GET_POINTER("zpmod_advertisementenabled");
+    if (!enabled || enabled->value == 0.0f)
+        return;
+
+    if (s_nextAdvertTime > gpGlobals->time)
+        return;
+
+    s_nextAdvertTime = gpGlobals->time + (180.0f + (float)RANDOM_LONG(0, 120));
+    const char* msg = kZPAds[s_adIndex % (int)ARRAYSIZE(kZPAds)];
+    s_adIndex++;
+
+    MESSAGE_BEGIN(MSG_ALL, gmsgTextMsg);
+        WRITE_BYTE(HUD_PRINTTALK);
+        WRITE_STRING(msg);
+    MESSAGE_END();
+}
+
 void ZPRoundThink(ZPRound* round) {
     CVAR_SET_STRING("sv_skyname", "night");
+
+    ZPAdvertThink();
 
     int connectedCount = ZPCountConnectedPlayers();
 
@@ -1643,16 +1724,10 @@ void ZPRoundThink(ZPRound* round) {
                 bool isLast = (humans == 1 && i == lastHuman);
                 g_players[i].lastHuman = isLast;
 
-                // admin freeze overlays movement for humans too
-                if (g_players[i].frozenUntil > gpGlobals->time) {
-                    pp->pev->movetype = MOVETYPE_NONE;
-                    pp->pev->velocity = Vector(0, 0, 0);
-                    pp->pev->gravity = 0.0f;
+                ZPApplyHumanOverlay(e);
+                if (g_players[i].frozenUntil > gpGlobals->time)
                     continue;
-                }
 
-                pp->pev->movetype = MOVETYPE_WALK;
-                pp->pev->gravity = 1.0f;
                 pp->pev->maxspeed = isLast ? 300.0f : 260.0f;
                 // adrenaline burst temporarily lifts human speed
                 if (g_players[i].adrenalineUntil > gpGlobals->time)
@@ -1781,6 +1856,8 @@ void ZPModInit(void) {
     ZPRoundInit(&g_round);
     ZPMapVoteReset();
     ZPAdminInit();
+    s_adIndex = 0;
+    s_nextAdvertTime = gpGlobals->time + (180.0f + (float)RANDOM_LONG(0, 120));
     g_engfuncs.pfnAddServerCommand("zpmod_restart", ZPRoundRestart);
 
     for (int i = 1; i <= gpGlobals->maxClients; i++) {
