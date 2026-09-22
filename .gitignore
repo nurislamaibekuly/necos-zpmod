@@ -42,3 +42,6 @@ local.properties
 
 game/
 *.log
+
+#Finder cache
+.DS_Store

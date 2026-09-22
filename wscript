@@ -56,8 +56,6 @@ def options(opt):
 		help = 'force targetting 32-bit libs, usually unneeded [default: %(default)s]')
 	grp.add_option('--disable-werror', action = 'store_true', dest = 'DISABLE_WERROR', default = False,
 		help = 'disable compilation abort on warning')
-	grp.add_option('--enable-voicemgr', action = 'store_true', dest = 'USE_VOICEMGR', default = False,
-		help = 'Enable VOICE MANAGER')
 	grp.add_option('--enable-android-apk', action = 'store_true', dest = 'ANDROID_APK', default = False,
 		help = 'Enable Android APK styled libraries deploy')
 
@@ -97,7 +95,7 @@ def configure(conf):
 	if conf.env.COMPILER_CC == 'msvc':
 		conf.load('msvc_pdb')
 
-	conf.load('msvs msdev subproject clang_compilation_database strip_on_install enforce_pic')
+	conf.load('msvs msdev subproject clang_compilation_database strip_on_install enforce_pic force_32bit')
 
 	conf.check_pic(True) # modern defaults
 	if conf.env.DEST_OS != 'win32':
@@ -107,17 +105,19 @@ def configure(conf):
 		check_libc_extension(STRLCPY_TEST, 'strlcpy', 'HAVE_STRLCPY')
 		check_libc_extension(STRLCAT_TEST, 'strlcat', 'HAVE_STRLCAT')
 
-	# We restrict 64-bit builds ONLY for Win/Linux/OSX running on Intel architecture
+	# NOTE: We restrict 64-bit builds ONLY for Win/Linux running on Intel architecture
 	# Because compatibility with original GoldSrc
+	# NOTE: Since modern OSX (since Catalina) don't support 32-bit applications, there is no point
+	# to restrict them to 32-bit engine, despite GoldSrc is still officially supported.
+	# There is now `-4` (or `--32bits`) configure flag for those
+	# who want to specifically build engine for 32-bit
 	if conf.env.DEST_OS in ['win32', 'linux'] and conf.env.DEST_CPU == 'x86_64':
-		conf.env.BIT32_MANDATORY = not conf.options.ALLOW64
+		force_32bit = not conf.options.ALLOW64
 	else:
-		conf.env.BIT32_MANDATORY = conf.options.FORCE32
+		force_32bit = conf.options.FORCE32
 
-	if conf.env.BIT32_MANDATORY:
-		Logs.info('WARNING: will build game for 32-bit target')
-
-	conf.load('force_32bit')
+	if force_32bit:
+		conf.force_32bit()
 
 	cflags, linkflags = conf.get_optimization_flags()
 	cxxflags = list(cflags) # optimization flags are common between C and C++ but we need a copy
@@ -188,7 +188,7 @@ def configure(conf):
 		]
 
 		opt_cflags = [
-			'-Werror=declaration-after-statement',
+			# '-Werror=declaration-after-statement',
 			'-Werror=enum-conversion',
 			'-Werror=implicit-int',
 			'-Werror=implicit-function-declaration',
@@ -288,8 +288,18 @@ def configure(conf):
 		if conf.env.cxxshlib_PATTERN.startswith('lib'):
 			conf.env.cxxshlib_PATTERN = conf.env.cxxshlib_PATTERN[3:]
 
+	conf.env.FREEVGUI_NO_INSTALL = True # prevents FreeVGUI from installing itself
+
+	# engine is obligated to provide VGUI interface in 32-bit builds on Windows/Linux/Mac as shared library
+	# on platforms supported only by Xash3D FWGS, freevgui can be linked statically into client library
+	if conf.env.DEST_OS in ['win32', 'linux', 'darwin'] and conf.env.DEST_CPU == 'x86':
+		conf.env.USE_STATIC_FREEVGUI = False
+	else:
+		# no prebuilt vgui shared library exists here by default, so link FreeVGUI into the client
+		conf.env.USE_STATIC_FREEVGUI = True
+
 	conf.load('library_naming')
-	conf.add_subproject('game_shared dlls cl_dll')
+	conf.add_subproject('game_shared dlls freevgui cl_dll')
 
 def build(bld):
 	if bld.env.WAFCACHE:
@@ -303,4 +313,4 @@ def build(bld):
 		excl='*.user configuration.py .lock* *conf_check_*/** config.log %s/*' % Build.CACHE_DIR,
 		quiet=True, generator=True)
 
-	bld.add_subproject('game_shared dlls cl_dll')
+	bld.add_subproject('game_shared dlls freevgui cl_dll')
