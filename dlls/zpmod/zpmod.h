@@ -25,6 +25,29 @@ enum ZMClasses {
     ZM_CLASS_BOSS
 };
 
+// how the first infection happens this round (chosen at countdown)
+enum ZPRoundMode {
+    ZMODE_CLASSIC,      // 1 first zombie
+    ZMODE_MULTIPLE,     // 3 first zombies
+    ZMODE_SWARM,        // 5 first zombies
+    ZMODE_PLAGUE,       // 1 first, infection spreads on its own over time
+    ZMODE_ARMAGEDDON,   // everyone but 2 humans starts infected
+    ZMODE_NEMESIS       // 1 human survivor vs 1 boss zombie, everyone else zombie
+};
+
+// random round modifier (picked rare, announced at countdown)
+enum ZPRoundEvent {
+    ZEV_NONE,
+    ZEV_LOW_GRAVITY,    // sv_gravity 400
+    ZEV_BLACKOUT,       // sudden darkness, last 15s
+    ZEV_ONE_HIT,        // zombie claws insta-kill
+    ZEV_DOUBLE_DAMAGE,  // zombie claw damage x2
+    ZEV_SPEED,          // everyone +35 maxspeed
+    ZEV_ARMOR,          // humans start at 100 armor
+    ZEV_DOUBLE_SPREAD,  // 2x initial infection
+    ZEV_SUDDEN_DEATH    // round timer halved
+};
+
 struct ZPRound {
     int state;
     float resetTime;
@@ -36,6 +59,15 @@ struct ZPRound {
     bool notEnoughPlayersPrinted;
     bool playersFrozen;
     bool lastHumanAnnounced;
+    int mode;             // ZPRoundMode for this round
+    int eventType;        // ZPRoundEvent for this round
+    float eventAnnounced;
+    bool suddenDeathActive;
+    float suddenDeathUntil;
+    bool plagueNextInfectTime;
+    float plagueNextSpread;
+    float lastHumanMusicUntil;
+    bool bossRound;
 };
 
 #define ZPMAPVOTE_OPTIONS 3
@@ -75,6 +107,20 @@ struct ZPPlayer {
     float abilityMenuUntil;
     float frozenUntil;
     bool noclip;
+    int steerMode;        // pick a round modifier (see ZPRoundEvent)
+    int killStreak;       // consecutive frags this life
+    int infectStreak;     // consecutive infections this life
+    int deathCount;
+    int roundsSurvived;
+    float playTime;       // seconds connected this session
+    int zombieKills;      // kills landed while a zombie
+    int roundsAsFirst;    // times became first zombie
+    int lastHumanCount;   // times were last human
+    bool lastHumanBuffGiven;
+    bool bossRageDone;
+    bool bossRoundStart;  // forced to spawn as a BOSS zombie when infected
+    float slowUntil;      // post-infection slowdown
+    float eventSlowUntil;
 };
 
 extern ZPRound g_round;
@@ -83,6 +129,32 @@ extern ZPMapVote g_mapVote;
 
 void ZPModInit(void);
 void ZPRoundThink(ZPRound* round);
+void ZPFeatureInit(void);
+void ZPFeaturePreRound(ZPRound* round);
+const char* ZPModeName(int mode);
+const char* ZPEventName(int ev);
+int ZPFeatureInitialInfections(ZPRound* round, int connected);
+void ZPFeatureStartInfections(ZPRound* round, int* players, int count);
+void ZPFeatureRoundThink(ZPRound* round);
+float ZPFeatureClawMultiplier(void);
+float ZPFeatureGravity(void);
+float ZPFeatureSpeedMultiplier(void);
+int ZPFeatureInitialArmor(void);
+float ZPFeatureRoundDuration(void);
+void ZPFeatureOnKill(edict_t* killer, bool fromHeadshot);
+void ZPFeatureOnInfect(edict_t* victim, int infectorIndex);
+void ZPFeatureOnDied(edict_t* player);
+void ZPFeatureLastHuman(edict_t* player);
+void ZPFeatureOnInfectVictim(edict_t* victim, int infectorIndex);
+void ZPFeaturePlayerDisconnect(edict_t* player);
+bool ZPStatsCommand(edict_t* sender, int argc, char** argv);
+bool ZPTopCommand(edict_t* sender, int argc, char** argv);
+void ZPStatsInit(void);
+void ZPStatsThink(void);
+void ZPStatsOnKill(edict_t* killer, bool fromHeadshot);
+void ZPStatsOnInfect(edict_t* victim, int infectorIndex);
+void ZPStatsOnDied(edict_t* player);
+void ZPStatsPlayerDisconnect(edict_t* player);
 void ZPPrecache(void);
 void ZPRoundStartAmbient(void);
 void ZPRoundStopAmbient(void);

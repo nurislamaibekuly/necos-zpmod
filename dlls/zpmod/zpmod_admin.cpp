@@ -258,38 +258,49 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     // ---- public commands ----
     if (!strcmp(cmd, "help")) {
         ZPAdminMsg(sender,
-            "!help !auth <pass> !who\n"
-            "Admin: !kick !ban !unban !slap !slay !heal !freeze !unfreeze\n"
-            "!tp !bring !zombie !human !noclip !god !map !endround !restart");
+            "^2!help^7 ^2!auth^7 <pass> ^2!who^7 ^2!stats^7 ^2!top^7\n"
+            "^1Admin:^7 !kick !ban !unban !slap !slay !heal !freeze !unfreeze\n"
+            "^1Admin:^7 !tp !bring !zombie !human !noclip !god !map !endround !restart");
+        return true;
+    }
+
+    if (!strcmp(cmd, "stats") || !strcmp(cmd, "me")) {
+        ZPStatsCommand(sender, argc, argv);
+        return true;
+    }
+
+    if (!strcmp(cmd, "top") || !strcmp(cmd, "top10")) {
+        ZPTopCommand(sender, argc, argv);
         return true;
     }
 
     if (!strcmp(cmd, "auth") || !strcmp(cmd, "login")) {
         if (argc < 2) {
-            ZPAdminMsg(sender, "Usage: !auth <password>");
+            ZPAdminMsg(sender, "^3Usage:^7 !auth <password>");
             return true;
         }
         cvar_t* passcv = CVAR_GET_POINTER("zp_admin_pass");
         const char* pw = passcv ? passcv->string : "";
         if (pw[0] && !strcmp(argv[1], pw)) {
             g_authed[idx] = true;
-            ZPAdminMsg(sender, "[Admin] Authenticated. Type !help for commands.");
+            ZPAdminMsg(sender, "^2[Admin] Authenticated.^7 Type ^3!help^7 for commands.");
         } else {
-            ZPAdminMsg(sender, "[Admin] Wrong password.");
+            ZPAdminMsg(sender, "^1[Admin] Wrong password.^7");
         }
         return true;
     }
 
     if (!strcmp(cmd, "who") || !strcmp(cmd, "players")) {
-        ZPAdminMsg(sender, "Connected players:");
+        ZPAdminMsg(sender, "^4Connected players:^7");
         for (int i = 1; i <= gpGlobals->maxClients; i++) {
             edict_t* e = INDEXENT(i);
             if (!ZPIsPlayerConnected(e)) continue;
             const char* role = "spectator";
-            if (ZPIsZombie(e)) role = "zombie";
-            else if (ZPIsHuman(e)) role = "human";
-            snprintf(outMsg, sizeof(outMsg), "  %s [%s] %s",
-                     isAdmin ? "[ADM]" : "     ", role, STRING(e->v.netname));
+            const char* roleColor = "^7";
+            if (ZPIsZombie(e)) { role = "zombie"; roleColor = "^1"; }
+            else if (ZPIsHuman(e)) { role = "human"; roleColor = "^2"; }
+            snprintf(outMsg, sizeof(outMsg), "  ^4%s^7 [%s%s^7] %s",
+                     isAdmin ? "[ADM]" : "     ", roleColor, role, STRING(e->v.netname));
             ZPAdminMsg(sender, outMsg);
         }
         return true;
@@ -297,14 +308,14 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
 
     // ---- admin-only from here ----
     if (!isAdmin) {
-        ZPAdminMsg(sender, "[Admin] No permission. Try !auth <password>");
+        ZPAdminMsg(sender, "^1[Admin] No permission.^7 Try ^3!auth <password>^7");
         return true;
     }
 
     if (!strcmp(cmd, "kick")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !kick <name> [reason]"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !kick <name> [reason]"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         const char* tname = STRING(t->v.netname);
         int uid = GETPLAYERUSERID(t);
@@ -315,9 +326,9 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "ban")) {
-        if (argc < 3) { ZPAdminMsg(sender, "Usage: !ban <name> <minutes> [reason]"); return true; }
+        if (argc < 3) { ZPAdminMsg(sender, "^3Usage:^7 !ban <name> <minutes> [reason]"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         const char* tname = STRING(t->v.netname);
         long mins = atol(argv[2]);
@@ -333,21 +344,21 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "unban")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !unban <name>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !unban <name>"); return true; }
         if (ZPAdminRemoveBan(argv[1]))
-            ZPAdminMsg(sender, "[Admin] Ban removed.");
+            ZPAdminMsg(sender, "^2[Admin] Ban removed.^7");
         else
-            ZPAdminMsg(sender, "[Admin] No matching ban found.");
+            ZPAdminMsg(sender, "^1[Admin] No matching ban found.^7");
         return true;
     }
 
     if (!strcmp(cmd, "slap")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !slap <name> [damage]"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !slap <name> [damage]"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         CBasePlayer* tp = (CBasePlayer*)GET_PRIVATE(t);
-        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "[Admin] Target is not alive."); return true; }
+        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "^1[Admin] Target is not alive.^7"); return true; }
 
         float dmg = 1.0f;
         if (argc >= 3) dmg = (float)atof(argv[2]);
@@ -364,12 +375,12 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "slay")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !slay <name>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !slay <name>"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         CBasePlayer* tp = (CBasePlayer*)GET_PRIVATE(t);
-        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "[Admin] Target is not alive."); return true; }
+        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "^1[Admin] Target is not alive.^7"); return true; }
 
         tp->TakeDamage(VARS(INDEXENT(0)), VARS(INDEXENT(0)), 10000.0f, DMG_GENERIC);
         UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("%s was slain by %s\n", STRING(t->v.netname), STRING(sender->v.netname)));
@@ -377,12 +388,12 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "heal")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !heal <name> [amount]"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !heal <name> [amount]"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         CBasePlayer* tp = (CBasePlayer*)GET_PRIVATE(t);
-        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "[Admin] Target is not alive."); return true; }
+        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "^1[Admin] Target is not alive.^7"); return true; }
 
         float amt = argc >= 3 ? (float)atof(argv[2]) : 100.0f;
         if (amt < 0) amt = 0;
@@ -392,12 +403,12 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "freeze")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !freeze <name> [seconds]"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !freeze <name> [seconds]"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         CBasePlayer* tp = (CBasePlayer*)GET_PRIVATE(t);
-        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "[Admin] Target is not alive."); return true; }
+        if (!tp || !tp->IsAlive()) { ZPAdminMsg(sender, "^1[Admin] Target is not alive.^7"); return true; }
 
         float secs = argc >= 3 ? (float)atof(argv[2]) : 30.0f;
         if (secs <= 0) secs = 30.0f;
@@ -407,9 +418,9 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "unfreeze")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !unfreeze <name>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !unfreeze <name>"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         g_players[ENTINDEX(t)].frozenUntil = 0.0f;
         t->v.movetype = MOVETYPE_WALK;
@@ -418,9 +429,9 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "tp") || !strcmp(cmd, "teleport")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !tp <name>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !tp <name>"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         CBasePlayer* me = (CBasePlayer*)GET_PRIVATE(sender);
         if (me && me->pev) {
@@ -432,9 +443,9 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "bring")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !bring <name>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !bring <name>"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
         t->v.origin = sender->v.origin + Vector(0, 0, 16);
         t->v.velocity = Vector(0, 0, 0);
@@ -442,21 +453,21 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "zombie") || !strcmp(cmd, "makezombie")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !zombie <name>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !zombie <name>"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
-        if (ZPIsZombie(t)) { ZPAdminMsg(sender, "[Admin] Already a zombie."); return true; }
+        if (ZPIsZombie(t)) { ZPAdminMsg(sender, "^1[Admin] Already a zombie.^7"); return true; }
         ZPInfectPlayer(t, true);
         return true;
     }
 
     if (!strcmp(cmd, "human") || !strcmp(cmd, "makehuman")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !human <name>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !human <name>"); return true; }
         edict_t* t = ZPAdminFindPlayer(argv[1]);
-        if (!t) { ZPAdminMsg(sender, "[Admin] Player not found."); return true; }
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
 
-        if (ZPIsHuman(t)) { ZPAdminMsg(sender, "[Admin] Already a human."); return true; }
+        if (ZPIsHuman(t)) { ZPAdminMsg(sender, "^1[Admin] Already a human.^7"); return true; }
         ZPMakeHuman(t);
         return true;
     }
@@ -467,11 +478,11 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
         if (g_players[idx].noclip) {
             sender->v.movetype = MOVETYPE_NOCLIP;
             sender->v.gravity = 0.0f;
-            ZPAdminMsg(sender, "[Admin] Noclip on");
+            ZPAdminMsg(sender, "^2[Admin] Noclip on^7");
         } else {
             sender->v.movetype = MOVETYPE_WALK;
             sender->v.gravity = 1.0f;
-            ZPAdminMsg(sender, "[Admin] Noclip off");
+            ZPAdminMsg(sender, "^2[Admin] Noclip off^7");
         }
         return true;
     }
@@ -479,16 +490,16 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     if (!strcmp(cmd, "god")) {
         if (sender->v.takedamage == DAMAGE_NO) {
             sender->v.takedamage = DAMAGE_AIM;
-            ZPAdminMsg(sender, "[Admin] Godmode off");
+            ZPAdminMsg(sender, "^2[Admin] Godmode off^7");
         } else {
             sender->v.takedamage = DAMAGE_NO;
-            ZPAdminMsg(sender, "[Admin] Godmode on");
+            ZPAdminMsg(sender, "^2[Admin] Godmode on^7");
         }
         return true;
     }
 
     if (!strcmp(cmd, "map") || !strcmp(cmd, "changelevel")) {
-        if (argc < 2) { ZPAdminMsg(sender, "Usage: !map <mapname>"); return true; }
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !map <mapname>"); return true; }
         SERVER_COMMAND(UTIL_VarArgs("changelevel %s\n", argv[1]));
         return true;
     }
@@ -507,10 +518,10 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     if (!strcmp(cmd, "restart")) {
         g_round.state = RS_ROUND_DRAW;
         g_round.resetTime = gpGlobals->time;
-        ZPAdminMsg(sender, "[Admin] Round restarting...");
+        ZPAdminMsg(sender, "^4[Admin] Round restarting...^7");
         return true;
     }
 
-    ZPAdminMsg(sender, UTIL_VarArgs("[Admin] Unknown command \"%s\". Try !help", cmd));
+    ZPAdminMsg(sender, UTIL_VarArgs("^1[Admin] Unknown command \"%s\".^7 Try ^3!help^7", cmd));
     return true;
 }

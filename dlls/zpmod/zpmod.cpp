@@ -107,6 +107,10 @@ void ZPRoundResetPlayer(edict_t* ed) {
     g_players[idx].chargeCooldown = 0.0f;
     g_players[idx].beamCooldown = 0.0f;
     g_players[idx].clawSwing = 0;
+    g_players[idx].bossRoundStart = false;
+    g_players[idx].lastHumanBuffGiven = false;
+    g_players[idx].killStreak = 0;
+    g_players[idx].infectStreak = 0;
     g_players[idx].healCooldown = 0.0f;
     g_players[idx].adrenalineCooldown = 0.0f;
     g_players[idx].adrenalineUntil = 0.0f;
@@ -205,6 +209,9 @@ void ZPPlayerDisconnect(edict_t* player) {
     if (!player) return;
     int idx = ENTINDEX(player);
     if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+    ZPFeaturePlayerDisconnect(player);
+    ZPStatsPlayerDisconnect(player);
 
     g_players[idx].ed = nullptr;
     g_players[idx].originalModel[0] = '\0';
@@ -355,8 +362,8 @@ void ZPApplyZombieClass(edict_t* player)
     }
 
     player->v.movetype = MOVETYPE_WALK;
-    player->v.maxspeed = speed;
-    player->v.gravity = gravity;
+    player->v.maxspeed = speed + ZPFeatureSpeedMultiplier();
+    player->v.gravity = gravity * ZPFeatureGravity();
     player->v.renderfx = kRenderFxGlowShell;
     player->v.renderamt = cls == ZM_CLASS_BOSS ? 80 : cls == ZM_CLASS_TANK ? 70 : 45;
     switch (cls) {
@@ -390,7 +397,7 @@ void ZPApplyHumanOverlay(edict_t* player)
     }
 
     player->v.movetype = MOVETYPE_WALK;
-    player->v.gravity = 1.0f;
+    player->v.gravity = 1.0f * ZPFeatureGravity();
 }
 
 void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
@@ -401,9 +408,15 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
 
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
 
+    bool forceBoss = g_players[idx].bossRoundStart;
+    g_players[idx].bossRoundStart = false;
+
     int r = RANDOM_LONG(1, 12);
     
     if (r == 6 && wasInfectedBySomeone == false) {
+        g_players[idx].ZMClass = ZM_CLASS_BOSS;
+        EMIT_SOUND(player, CHAN_AUTO, "ambience/the_horror3.wav", 1.0, ATTN_NONE);
+    } else if (forceBoss && !wasInfectedBySomeone) {
         g_players[idx].ZMClass = ZM_CLASS_BOSS;
         EMIT_SOUND(player, CHAN_AUTO, "ambience/the_horror3.wav", 1.0, ATTN_NONE);
     } else {
@@ -517,6 +530,8 @@ void ZPMakeHuman(edict_t* ed) {
     g_players[idx].frozenUntil = 0.0f;
     g_players[idx].lastHuman = false;
     g_players[idx].lastInfectKiller = 0;
+    g_players[idx].bossRoundStart = false;
+    g_players[idx].lastHumanBuffGiven = false;
 
     ed->v.team = RoleToInt(ROLE_HUMAN);
     ed->v.deadflag = DEAD_NO;
@@ -596,6 +611,9 @@ bool ZPDied(edict_t* player, int attackerIndex) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer) return false;
 
+    ZPFeatureOnDied(player);
+    ZPStatsOnDied(player);
+
     // only a zombie's killing blow converts a human — suicides, fall damage
     // and teamkills are real deaths
     if (g_round.state == RS_ACTIVE && ZPIsHuman(player)) {
@@ -622,6 +640,8 @@ bool ZPDied(edict_t* player, int attackerIndex) {
             edict_t* killer = INDEXENT(attackerIndex);
             if (ZPIsPlayerConnected(killer) && ZPIsHuman(killer)) {
                 ZPKillReward(killer, headshot);
+                ZPFeatureOnKill(killer, headshot);
+                ZPStatsOnKill(killer, headshot);
 
                 // headshot blast: white flash + sparks at the brain
                 if (headshot) {
@@ -688,13 +708,13 @@ void ZPZombieSwing(edict_t* player)
         // ReZombie-style claw: deals melee damage per hit (class-dependent).
         // Armor absorbs part of it; a killing blow from a zombie converts the
         // victim (handled in ZPDied).
-        float dmg = 40.0f;
+        float dmg = 40.0f * ZPFeatureClawMultiplier();
         switch (g_players[idx].ZMClass) {
-            case ZM_CLASS_FAST:   dmg = 30.0f; break;
-            case ZM_CLASS_TANK:   dmg = 55.0f; break;
-            case ZM_CLASS_JUMPER: dmg = 32.0f; break;
-            case ZM_CLASS_BOSS:   dmg = 60.0f; break;
-            default:              dmg = 40.0f; break;
+            case ZM_CLASS_FAST:   dmg = 30.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_TANK:   dmg = 55.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_JUMPER: dmg = 32.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_BOSS:   dmg = 60.0f * ZPFeatureClawMultiplier(); break;
+            default:              dmg = 40.0f * ZPFeatureClawMultiplier(); break;
         }
         pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_SLASH);
 
@@ -840,12 +860,12 @@ void ZPHUD()
     params.holdTime = 1.0f;
 
     // top center: round status / timer
-    char top[80];
+    char top[128];
     switch (g_round.state) {
         case RS_PREP:
             if (g_round.countdownStarted && gpGlobals->time < g_round.nextStateTime) {
                 int sec = (int)ceilf(g_round.nextStateTime - gpGlobals->time);
-                snprintf(top, sizeof(top), "ROUND STARTS IN %02d:%02d", sec / 60, sec % 60);
+                snprintf(top, sizeof(top), "ROUND STARTS IN %02d:%02d  [%s]", sec / 60, sec % 60, ZPModeName(g_round.mode));
             } else {
                 snprintf(top, sizeof(top), "ROUND PREPARING");
             }
@@ -853,7 +873,11 @@ void ZPHUD()
         case RS_ACTIVE: {
             int sec = (int)ceilf((g_round.roundStartTime + g_round.roundDuration) - gpGlobals->time);
             if (sec < 0) sec = 0;
-            snprintf(top, sizeof(top), "TIME LEFT %02d:%02d", sec / 60, sec % 60);
+            const char* ev = ZPEventName(g_round.eventType);
+            if (ev[0])
+                snprintf(top, sizeof(top), "TIME LEFT %02d:%02d  [%s / %s]", sec / 60, sec % 60, ZPModeName(g_round.mode), ev);
+            else
+                snprintf(top, sizeof(top), "TIME LEFT %02d:%02d  [%s]", sec / 60, sec % 60, ZPModeName(g_round.mode));
             break;
         }
         case RS_HUMANS_WIN:
@@ -964,6 +988,15 @@ void ZPRoundInit(ZPRound* round) {
     round->notEnoughPlayersPrinted = false;
     round->playersFrozen = false;
     round->lastHumanAnnounced = false;
+    round->mode = ZMODE_CLASSIC;
+    round->eventType = ZEV_NONE;
+    round->eventAnnounced = 0.0f;
+    round->suddenDeathActive = false;
+    round->suddenDeathUntil = 0.0f;
+    round->plagueNextInfectTime = false;
+    round->plagueNextSpread = 0.0f;
+    round->lastHumanMusicUntil = 0.0f;
+    round->bossRound = false;
 }
 
 void ZPRoundStartAmbient() {
@@ -1064,6 +1097,10 @@ void ZPOnInfect(edict_t* victim, int infectorIndex) {
     g_players[v].lastInfectKiller = infectorIndex;
     g_players[v].lastInfectTime = gpGlobals->time;
     g_players[v].killedByHeadshot = false;
+
+    ZPFeatureOnInfect(victim, infectorIndex);
+    ZPFeatureOnInfectVictim(victim, infectorIndex);
+    ZPStatsOnInfect(victim, infectorIndex);
 
     if (infectorIndex >= 1 && infectorIndex <= gpGlobals->maxClients) {
         g_players[infectorIndex].infections++;
@@ -1570,9 +1607,13 @@ void ZPRoundThink(ZPRound* round) {
 
     ZPAdvertThink();
 
+    ZPStatsThink();
+
     int connectedCount = ZPCountConnectedPlayers();
 
     ZPHUD();
+
+    ZPFeatureRoundThink(round);
 
     if (connectedCount < 2) {
         if (round->state != RS_PREP || round->countdownStarted) {
@@ -1629,6 +1670,9 @@ void ZPRoundThink(ZPRound* round) {
             round->lastAnnounce = -1;
             lastSpokeSecond = -1;
 
+            /* pick + announce the random mode / boss round / event for this round */
+            ZPFeaturePreRound(round);
+
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
                 if (ZPIsPlayerConnected(ed) && ed->v.health > 0) {
@@ -1678,11 +1722,29 @@ void ZPRoundThink(ZPRound* round) {
 
             UTIL_ClientPrintAll(HUD_PRINTCENTER, "INFECTION!\n");
 
+            const char* activeEvent = ZPEventName(round->eventType);
+            if (activeEvent[0]) {
+                char evMsg[96];
+                snprintf(evMsg, sizeof(evMsg), "EVENT: %s!", activeEvent);
+                UTIL_ClientPrintAll(HUD_PRINTCENTER, evMsg);
+            }
+
             if (count > 0) {
-                int idx = RANDOM_LONG(0, count - 1);
-                edict_t* chosen = INDEXENT(players[idx]);
-                ZPInfectPlayer(chosen, false);
-                CLIENT_PRINTF(chosen, print_center, "You are the first zombie\n");
+                /* apply the round mode's starting infection */
+                ZPFeatureStartInfections(round, players, count);
+
+                /* ARMOR event: humans get a full suit at spawn */
+                int armor = ZPFeatureInitialArmor();
+                if (armor > 0) {
+                    for (int i = 1; i <= gpGlobals->maxClients; i++) {
+                        edict_t* ed = INDEXENT(i);
+                        if (!ZPIsPlayerConnected(ed) || !ZPIsHuman(ed)) continue;
+                        CBasePlayer* pp = (CBasePlayer*)GET_PRIVATE(ed);
+                        if (!pp || !pp->IsAlive()) continue;
+                        pp->pev->armorvalue = (float)armor;
+                        pp->pev->armortype = 0.5f;
+                    }
+                }
             }
         }
     }
@@ -1709,6 +1771,7 @@ void ZPRoundThink(ZPRound* round) {
                 char lastMsg[96];
                 snprintf(lastMsg, sizeof(lastMsg), "LAST HUMAN: %s", STRING(INDEXENT(lastHuman)->v.netname));
                 UTIL_ClientPrintAll(HUD_PRINTCENTER, lastMsg);
+                ZPFeatureLastHuman(INDEXENT(lastHuman));
             }
         } else {
             round->lastHumanAnnounced = false;
@@ -1728,10 +1791,10 @@ void ZPRoundThink(ZPRound* round) {
                 if (g_players[i].frozenUntil > gpGlobals->time)
                     continue;
 
-                pp->pev->maxspeed = isLast ? 300.0f : 260.0f;
+                pp->pev->maxspeed = (isLast ? 300.0f : 260.0f) + ZPFeatureSpeedMultiplier();
                 // adrenaline burst temporarily lifts human speed
                 if (g_players[i].adrenalineUntil > gpGlobals->time)
-                    pp->pev->maxspeed = 335.0f;
+                    pp->pev->maxspeed = 335.0f + ZPFeatureSpeedMultiplier();
             } else {
                 g_players[i].lastHuman = false;
                 // keep class stats applied every frame (freeze handled inside)
@@ -1854,6 +1917,8 @@ void ZPRoundRestart() {
 void ZPModInit(void) {
     memset(g_players, 0, sizeof(g_players));
     ZPRoundInit(&g_round);
+    ZPFeatureInit();
+    ZPStatsInit();
     ZPMapVoteReset();
     ZPAdminInit();
     s_adIndex = 0;
@@ -1878,6 +1943,8 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/wall_2.wav");
     PRECACHE_SOUND("zpmod/wall_3.wav");
     PRECACHE_SOUND("zpmod/start.wav");
+    PRECACHE_SOUND("zpmod/round_start.wav");
+    PRECACHE_SOUND("zpmod/round_start_boss.wav");
     PRECACHE_SOUND("zpmod/human_death_1.wav");
     PRECACHE_SOUND("zpmod/human_death_2.wav");
     PRECACHE_SOUND("zombie/zo_attack1.wav");
@@ -1907,8 +1974,10 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("ambience/the_horror3.wav");
     PRECACHE_SOUND("items/smallmedkit1.wav");
     PRECACHE_SOUND("items/suitchargeno1.wav");
+    PRECACHE_SOUND("items/suitcharge1.wav");
     PRECACHE_SOUND("debris/bustmetal1.wav");
     PRECACHE_SOUND("debris/bustmetal2.wav");
+    PRECACHE_SOUND("player/heartbeat1.wav");
 
     PRECACHE_MODEL("models/zpmod/v_claws.mdl");
     PRECACHE_GENERIC("models/zpmod/v_claws.mdl");
