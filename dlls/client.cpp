@@ -613,6 +613,10 @@ void ClientCommand( edict_t *pEntity )
 	{
 		// just ignore it
 	}
+	else if( FStrEq( pcmd, "menuselect" ) )
+	{
+		ZPMapVoteSelect( ENTINDEX( pEntity ), atoi( CMD_ARGV( 1 ) ) );
+	}
 	else if( FStrEq( pcmd, "follownext" ) )	// follow next player
 	{
 		CBasePlayer *pPlayer = GetClassPtr( (CBasePlayer *)pev );

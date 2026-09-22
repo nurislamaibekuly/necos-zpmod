@@ -18,6 +18,9 @@ ZPRound g_round;
 TraceResult tr;
 int lastSpokeSecond;
 ZPPlayer g_players[33];
+ZPMapVote g_mapVote;
+
+extern int gmsgShowMenu;
 
 int RoleToInt(Role r) {
     switch(r) {
@@ -886,6 +889,192 @@ void ZPRoundWinSound(edict_t* player, const char* winSound, const char* ambientP
     }
 }
 
+void ZPMapVoteReset(void) {
+    g_mapVote.active = false;
+    g_mapVote.hasVoted = false;
+    g_mapVote.tooFewMaps = false;
+    g_mapVote.endTime = 0.0f;
+
+    for (int i = 0; i < ZPMAPVOTE_OPTIONS; i++) {
+        g_mapVote.options[i][0] = '\0';
+        g_mapVote.votes[i] = 0;
+    }
+
+    for (int i = 0; i < 33; i++)
+        g_mapVote.playerVote[i] = -1;
+}
+
+void ZPMapVoteOpen(void) {
+    if (g_mapVote.active || g_mapVote.hasVoted)
+        return;
+
+    char pool[32][32];
+    int poolCount = 0;
+    int size = 0;
+    char* buf = (char*)LOAD_FILE_FOR_ME("mapcycle.txt", &size);
+
+    if (buf && size > 0) {
+        char* p = buf;
+
+        while (*p && poolCount < 32) {
+            char line[128];
+            int ll = 0;
+
+            while (*p && *p != '\n' && ll < (int)sizeof(line) - 1)
+                line[ll++] = *p++;
+            if (*p == '\n')
+                p++;
+            line[ll] = '\0';
+
+            char* tok = line;
+            while (*tok == ' ' || *tok == '\t' || *tok == '\r')
+                tok++;
+
+            if (!*tok || *tok == ';' || (*tok == '/' && tok[1] == '/'))
+                continue;
+
+            const char* mapName = tok;
+            if (strncmp(mapName, "map ", 4) == 0)
+                mapName += 4;
+            else if (strncmp(mapName, "defaultmap ", 11) == 0)
+                mapName += 11;
+
+            char name[32];
+            int n = 0;
+            while (*mapName && *mapName != ' ' && *mapName != '\t' && *mapName != ':' && n < 31)
+                name[n++] = *mapName++;
+            name[n] = '\0';
+
+            if (!n)
+                continue;
+            if (stricmp(name, STRING(gpGlobals->mapname)) == 0)
+                continue;
+
+            bool dup = false;
+            for (int i = 0; i < poolCount; i++) {
+                if (stricmp(pool[i], name) == 0) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup)
+                continue;
+
+            strncpy(pool[poolCount], name, sizeof(pool[0]) - 1);
+            pool[poolCount][sizeof(pool[0]) - 1] = '\0';
+            poolCount++;
+        }
+    }
+
+    if (buf)
+        FREE_FILE(buf);
+
+    if (poolCount < 2) {
+        if (!g_mapVote.tooFewMaps) {
+            g_mapVote.tooFewMaps = true;
+            UTIL_ClientPrintAll(HUD_PRINTCENTER, "Not enough maps in mapcycle.txt for a vote\n");
+        }
+        return;
+    }
+
+    int options = poolCount < ZPMAPVOTE_OPTIONS ? poolCount : ZPMAPVOTE_OPTIONS;
+    bool used[32] = { false };
+
+    for (int i = 0; i < options; i++) {
+        int pick;
+        do {
+            pick = RANDOM_LONG(0, poolCount - 1);
+        } while (used[pick]);
+
+        used[pick] = true;
+        strcpy(g_mapVote.options[i], pool[pick]);
+        g_mapVote.votes[i] = 0;
+    }
+
+    g_mapVote.active = true;
+    g_mapVote.endTime = gpGlobals->time + ZPMAPVOTE_LENGTH;
+
+    char menuText[256];
+    snprintf(menuText, sizeof(menuText), "MAP VOTE!\n1. %s\n2. %s\n3. %s",
+             g_mapVote.options[0],
+             options > 1 ? g_mapVote.options[1] : "",
+             options > 2 ? g_mapVote.options[2] : "");
+
+    unsigned short bits = 0;
+    for (int i = 0; i < options; i++)
+        bits |= (1 << i);
+
+    for (int i = 1; i <= gpGlobals->maxClients; i++) {
+        edict_t* ed = INDEXENT(i);
+        if (!ZPIsPlayerConnected(ed))
+            continue;
+
+        MESSAGE_BEGIN(MSG_ONE, gmsgShowMenu, NULL, ed);
+            WRITE_SHORT(bits);
+            WRITE_CHAR((int)ZPMAPVOTE_LENGTH);
+            WRITE_BYTE(0);
+            WRITE_STRING(menuText);
+        MESSAGE_END();
+    }
+
+    UTIL_ClientPrintAll(HUD_PRINTCENTER, "Map vote started! Press 1, 2 or 3\n");
+}
+
+void ZPMapVoteThink(void) {
+    if (!g_mapVote.active)
+        return;
+    if (gpGlobals->time < g_mapVote.endTime)
+        return;
+
+    int winner = 0;
+    int best = g_mapVote.votes[0];
+
+    for (int i = 1; i < ZPMAPVOTE_OPTIONS; i++) {
+        if (g_mapVote.votes[i] > best) {
+            best = g_mapVote.votes[i];
+            winner = i;
+        }
+    }
+
+    if (best <= 0) {
+        int valid = 0;
+        for (int i = 0; i < ZPMAPVOTE_OPTIONS; i++) {
+            if (g_mapVote.options[i][0] != '\0')
+                valid++;
+        }
+        winner = RANDOM_LONG(0, valid - 1) % ZPMAPVOTE_OPTIONS;
+
+        while (g_mapVote.options[winner][0] == '\0')
+            winner = (winner + 1) % ZPMAPVOTE_OPTIONS;
+    }
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Next map: %s", g_mapVote.options[winner]);
+    UTIL_ClientPrintAll(HUD_PRINTCENTER, msg);
+
+    const char* map = g_mapVote.options[winner];
+    g_mapVote.active = false;
+    g_mapVote.hasVoted = true;
+    g_mapVote.endTime = 0.0f;
+    CHANGE_LEVEL(map, NULL);
+}
+
+void ZPMapVoteSelect(int playerIndex, int slot) {
+    if (!g_mapVote.active)
+        return;
+    if (playerIndex < 1 || playerIndex > gpGlobals->maxClients)
+        return;
+    if (slot < 1 || slot > ZPMAPVOTE_OPTIONS)
+        return;
+    if (g_mapVote.options[slot - 1][0] == '\0')
+        return;
+    if (g_mapVote.playerVote[playerIndex] >= 0)
+        return;
+
+    g_mapVote.playerVote[playerIndex] = slot - 1;
+    g_mapVote.votes[slot - 1] += 1;
+}
+
 void ZPRoundThink(ZPRound* round) {
     CVAR_SET_STRING("sv_skyname", "night");
 
@@ -1130,7 +1319,12 @@ void ZPRoundThink(ZPRound* round) {
 
     // if win / draw
     else if (round->state == RS_ZOMBIES_WIN || round->state == RS_HUMANS_WIN || round->state == RS_ROUND_DRAW) {
-        if (gpGlobals->time >= round->resetTime) {
+        if (gpGlobals->time >= ZPMAPVOTE_INTERVAL)
+            ZPMapVoteOpen();
+
+        ZPMapVoteThink();
+
+        if (gpGlobals->time >= round->resetTime && !g_mapVote.active) {
             round->state = RS_PREP;
             round->countdownStarted = false;
             round->notEnoughPlayersPrinted = false;
@@ -1158,6 +1352,7 @@ void ZPRoundRestart() {
 void ZPModInit(void) {
     memset(g_players, 0, sizeof(g_players));
     ZPRoundInit(&g_round);
+    ZPMapVoteReset();
     g_engfuncs.pfnAddServerCommand("zpmod_restart", ZPRoundRestart);
 
     for (int i = 1; i <= gpGlobals->maxClients; i++) {

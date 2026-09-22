@@ -35,6 +35,20 @@ struct ZPRound {
     bool lastHumanAnnounced;
 };
 
+#define ZPMAPVOTE_OPTIONS 3
+#define ZPMAPVOTE_INTERVAL 1200.0f
+#define ZPMAPVOTE_LENGTH 25.0f
+
+struct ZPMapVote {
+    bool active;
+    bool hasVoted;
+    bool tooFewMaps;
+    float endTime;
+    char options[ZPMAPVOTE_OPTIONS][32];
+    int votes[ZPMAPVOTE_OPTIONS];
+    int playerVote[33];
+};
+
 struct ZPPlayer {
     char originalModel[32];
     edict_t* ed;
@@ -54,6 +68,7 @@ struct ZPPlayer {
 
 extern ZPRound g_round;
 extern ZPPlayer g_players[33];
+extern ZPMapVote g_mapVote;
 
 void ZPModInit(void);
 void ZPRoundThink(ZPRound* round);
@@ -81,3 +96,7 @@ void ZPPlayWelcomeMusic(edict_t* player);
 void ZPPlayerDisconnect(edict_t* player);
 void ZPSetPlayerModel(edict_t* player, const char* modelName);
 void ZPRoundResetPlayer(edict_t* player);
+void ZPMapVoteReset(void);
+void ZPMapVoteOpen(void);
+void ZPMapVoteThink(void);
+void ZPMapVoteSelect(int playerIndex, int slot);
