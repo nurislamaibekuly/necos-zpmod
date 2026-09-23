@@ -1019,6 +1019,7 @@ void ZPRoundInit(ZPRound* round) {
     round->plagueNextSpread = 0.0f;
     round->lastHumanMusicUntil = 0.0f;
     round->bossRound = false;
+    round->ambientPlaying = false;
 }
 
 void ZPRoundStartAmbient() {
@@ -1031,6 +1032,7 @@ void ZPRoundStartAmbient() {
         0,
         100
     );
+    g_round.ambientPlaying = true;
 }
 
 void ZPRoundStopAmbient() {
@@ -1043,6 +1045,7 @@ void ZPRoundStopAmbient() {
         SND_STOP,
         100
     );
+    g_round.ambientPlaying = false;
 }
 
 void ZPSetPlayerModel(edict_t* player, const char* modelName)
@@ -1664,7 +1667,11 @@ void ZPRoundThink(ZPRound* round) {
 
     // if preparing
     if (round->state == RS_PREP) {
-        ZPRoundStopAmbient();
+        // stop the round ambient only while it's actually playing; emitting a
+        // SND_STOP for wind1 every frame otherwise spams the engine sound
+        // system for the whole countdown (and shows up as "wind1 late-precache")
+        if (round->ambientPlaying)
+            ZPRoundStopAmbient();
 
         int players[32];
         int count = 0;
@@ -1952,6 +1959,7 @@ void ZPModInit(void) {
     ZPRoundInit(&g_round);
     ZPFeatureInit();
     ZPStatsInit();
+    ZPModGrenadeInit();
     ZPMapVoteReset();
     ZPAdminInit();
     s_adIndex = 0;
@@ -1967,6 +1975,7 @@ void ZPModInit(void) {
 }
 
 void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
+    PRECACHE_SOUND("ambience/wind1.wav");
     PRECACHE_SOUND("zpmod/coming_1.wav");
     PRECACHE_SOUND("zpmod/coming_2.wav");
     PRECACHE_SOUND("zpmod/attack_1.wav");

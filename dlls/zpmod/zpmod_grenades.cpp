@@ -60,6 +60,25 @@ static float      g_flZombieBurnUntil[ZP_MAX_BURN_SLOTS];
 static float       g_flZombieNextBurnTick[ZP_MAX_BURN_SLOTS];
 static entvars_t *g_pevZombieBurnAttacker[ZP_MAX_BURN_SLOTS];
 
+static CBaseEntity *s_pTicker = NULL;
+
+// Called on every ServerActivate / map load. The previous level's ticker
+// entity was destroyed by the map change and its edict memory may be reused
+// for new entities (or freed entirely), so both the singleton pointer and the
+// burn bookkeeping MUST be dropped here, otherwise the first molotov/freeze
+// explosion of the next level dereferences stale state.
+void ZPModGrenadeInit( void )
+{
+	for( int i = 0; i < ZP_MAX_BURN_SLOTS; i++ )
+	{
+		g_flZombieBurnUntil[i] = 0.0f;
+		g_flZombieNextBurnTick[i] = 0.0f;
+		g_pevZombieBurnAttacker[i] = NULL;
+	}
+
+	s_pTicker = NULL;
+}
+
 static void ZPIgniteZombie( int slot, entvars_t *attacker, float duration )
 {
 	if( slot < 1 || slot >= ZP_MAX_BURN_SLOTS )
@@ -136,7 +155,6 @@ void CZPBurnTicker::TickThink( void )
 
 static void ZPEnsureBurnTicker( void )
 {
-	static CBaseEntity *s_pTicker = NULL;
 	if( s_pTicker && !FNullEnt( s_pTicker->edict() ) )
 		return;
 

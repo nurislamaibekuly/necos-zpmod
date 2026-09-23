@@ -10,7 +10,7 @@ JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 cmake -S "$ROOT" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SERVER=ON \
-  -DBUILD_CLIENT=ON \
+  -DBUILD_CLIENT=OFF \
   -DGAMEDIR="$GAMEDIR"
 
 cmake --build "$BUILD_DIR" -j "$JOBS"
@@ -19,7 +19,6 @@ cmake --install "$BUILD_DIR"
 
 echo "Installed:"
 echo "  $GAMEDIR/dlls/zpserver_arm64.dylib"
-echo "  $GAMEDIR/cl_dlls/client_arm64.dylib"
 
 echo
 # Start the game (mirrors build.bat). Override with AUTO_LAUNCH=1 to skip the prompt.

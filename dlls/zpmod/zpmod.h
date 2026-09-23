@@ -73,6 +73,7 @@ struct ZPRound {
     float plagueNextSpread;
     float lastHumanMusicUntil;
     bool bossRound;
+    bool ambientPlaying;
 };
 
 #define ZPMAPVOTE_OPTIONS 3
@@ -133,6 +134,7 @@ extern ZPPlayer g_players[33];
 extern ZPMapVote g_mapVote;
 
 void ZPModInit(void);
+void ZPModGrenadeInit(void);
 void ZPRoundThink(ZPRound* round);
 void ZPFeatureInit(void);
 void ZPFeaturePreRound(ZPRound* round);
