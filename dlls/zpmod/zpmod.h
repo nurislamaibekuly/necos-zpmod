@@ -135,6 +135,7 @@ extern ZPMapVote g_mapVote;
 
 void ZPModInit(void);
 void ZPModGrenadeInit(void);
+void ZPCleanupWorld(void);
 void ZPRoundThink(ZPRound* round);
 void ZPFeatureInit(void);
 void ZPFeaturePreRound(ZPRound* round);

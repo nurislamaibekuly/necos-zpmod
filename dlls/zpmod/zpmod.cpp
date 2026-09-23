@@ -1022,6 +1022,32 @@ void ZPRoundInit(ZPRound* round) {
     round->ambientPlaying = false;
 }
 
+// every-round arena wipe: remove world clutter spawned during play
+// (dropped/created weapons, ammo, item healthkits/batteries, weaponboxes
+// and any leftover ZP grenades) so each round starts on a clean map.
+// Blood pools and shell casings are client-side surface effects, so the
+// server can't clear those - clients can drop their decal count with
+// r_decals to reduce them.
+void ZPCleanupWorld(void) {
+    for (int i = gpGlobals->maxClients + 1; i < gpGlobals->maxEntities; i++) {
+        edict_t* ed = INDEXENT(i);
+        if (!ed || ed->free || FNullEnt(ed))
+            continue;
+
+        const char* cls = STRING(ed->v.classname);
+        if (!cls || !cls[0])
+            continue;
+
+        if (!strncmp(cls, "weapon_", 7) ||
+            !strncmp(cls, "ammo_", 5) ||
+            !strncmp(cls, "item_", 5) ||
+            !strncmp(cls, "weaponbox", 9) ||
+            !strncmp(cls, "zp_grenade", 10) ||
+            !strncmp(cls, "grenade", 7))
+            UTIL_Remove(CBaseEntity::Instance(ed));
+    }
+}
+
 void ZPRoundStartAmbient() {
     EMIT_AMBIENT_SOUND(
         ENT(0),
@@ -1748,6 +1774,7 @@ void ZPRoundThink(ZPRound* round) {
 
             ZPFreezePlayers(false);
             ZPRoundStartAmbient();
+            ZPCleanupWorld();
 
             UTIL_ClientPrintAll(HUD_PRINTCENTER, "INFECTION!\n");
 
@@ -1936,6 +1963,7 @@ void ZPRoundThink(ZPRound* round) {
             round->lastAnnounce = -1;
             lastSpokeSecond = -1;
             ZPRoundStopAmbient();
+            ZPCleanupWorld();
 
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
