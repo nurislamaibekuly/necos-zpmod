@@ -80,6 +80,7 @@ public:
 #define	WEAPON_SNARK			15
 #define WEAPON_MOLOTOV			16	// zpmod: molotov, humans only
 #define WEAPON_FREEZEBOMB		17	// zpmod: freeze grenade, humans only
+#define WEAPON_INFECTIONBOMB	18	// zpmod: infection bomb, zombies only
 
 #define WEAPON_ALLWEAPONS		(~(1<<WEAPON_SUIT))
 
@@ -102,6 +103,7 @@ public:
 #define SNARK_WEIGHT		5
 #define MOLOTOV_WEIGHT		5
 #define FREEZEBOMB_WEIGHT	5
+#define INFECTIONBOMB_WEIGHT	5
 #define SATCHEL_WEIGHT		-10
 #define TRIPMINE_WEIGHT		-10
 
@@ -115,6 +117,7 @@ public:
 #define HANDGRENADE_MAX_CARRY	10
 #define MOLOTOV_MAX_CARRY		5
 #define FREEZEBOMB_MAX_CARRY	5
+#define INFECTIONBOMB_MAX_CARRY	1
 #define SATCHEL_MAX_CARRY		5
 #define TRIPMINE_MAX_CARRY		5
 #define SNARK_MAX_CARRY			15

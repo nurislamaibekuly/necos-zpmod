@@ -101,6 +101,24 @@ int CCrowbar::AddToPlayer( CBasePlayer *pPlayer )
 
 BOOL CCrowbar::Deploy()
 {
+#if !CLIENT_DLL
+	// zombies swing the claw hand, not the crowbar - restore the claw
+	// viewmodel every time they re-deploy (e.g. after switching from the
+	// infection bomb back to their melee)
+	if (ZPIsZombie(m_pPlayer->edict()))
+	{
+		if (!CanDeploy())
+			return FALSE;
+		m_pPlayer->pev->viewmodel = MAKE_STRING("models/zpmod/v_claws.mdl");
+		m_pPlayer->pev->weaponmodel = iStringNull;
+		m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.5f;
+		strcpy(m_pPlayer->m_szAnimExtention, "crowbar");
+		SendWeaponAnim(CROWBAR_DRAW);
+		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 1.0f;
+		m_flLastFireTime = 0.0f;
+		return TRUE;
+	}
+#endif
 	return DefaultDeploy( "models/v_crowbar.mdl", "models/p_crowbar.mdl", CROWBAR_DRAW, "crowbar" );
 }
 

@@ -376,6 +376,7 @@ void W_Precache( void )
 	// zpmod grenades (molotov + frost bomb)
 	UTIL_PrecacheOtherWeapon("weapon_molotov");
 	UTIL_PrecacheOtherWeapon("weapon_freezebomb");
+	UTIL_PrecacheOtherWeapon("weapon_infectionbomb");
 	{
 		ItemInfo II = CBasePlayerItem::ItemInfoArray[WEAPON_MOLOTOV];
 		ALERT(at_console, "ZPDEBUG: weapon_molotov registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
@@ -383,6 +384,9 @@ void W_Precache( void )
 		II = CBasePlayerItem::ItemInfoArray[WEAPON_FREEZEBOMB];
 		ALERT(at_console, "ZPDEBUG: weapon_freezebomb registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
 		ZP_Trace("weapon_freezebomb registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
+		II = CBasePlayerItem::ItemInfoArray[WEAPON_INFECTIONBOMB];
+		ALERT(at_console, "ZPDEBUG: weapon_infectionbomb registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
+		ZP_Trace("weapon_infectionbomb registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
 	}
 #if !OEM_BUILD && !HLDEMO_BUILD
 	// squeak grenade

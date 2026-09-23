@@ -15,13 +15,18 @@
 // Both are handed to humans on spawn. Zombies can never equip or throw them
 // and the effects only ever hurt/impair zombies.
 //
+//  - Infection bomb: zombie-only throwable that converts every human inside
+//    the blast radius (last human alive is killed instead), ZP5.0 style.
+//
 // The view/player/world models are 4-sequence GoldSrc grenade rigs:
 //   idle=0, pullpin=1, throw=2, deploy=3
 
 #define ZP_MOLOTOV_DEFAULT_GIVE		1
 #define ZP_FREEZEBOMB_DEFAULT_GIVE	1
+#define ZP_INFECTIONBOMB_DEFAULT_GIVE	1
 #define ZP_MOLOTOV_MAX_CARRY		1
 #define ZP_FREEZEBOMB_MAX_CARRY		1
+#define ZP_INFECTIONBOMB_MAX_CARRY	1
 
 #define ZP_MOLOTOV_DAMAGE			110.0f
 #define ZP_MOLOTOV_RADIUS			240.0f
@@ -34,6 +39,13 @@
 
 #define ZP_FREEZE_RADIUS			300.0f
 #define ZP_FREEZE_TIME				10.0f
+
+#define ZP_INFECTION_RADIUS			240.0f
+
+// safety net for the hold-to-throw state machine: if the attack button's
+// release is never seen (lag, alt-tab, weapon switch, menu), force the
+// throw after this many seconds instead of leaving the weapon stuck.
+#define ZP_GRENADE_MAX_HOLD			5.0f
 
 //---------------------------------------------------------------
 // persistent zombie burning: once a zombie is touched by molotov fire
@@ -142,7 +154,8 @@ public:
 	enum Type
 	{
 		MOLOTOV = 0,
-		FREEZE = 1
+		FREEZE = 1,
+		INFECTION = 2
 	};
 
 	void Spawn( void );
@@ -155,6 +168,7 @@ public:
 	void Explode( void );
 	void ExplodeMolotov( void );
 	void ExplodeFreeze( void );
+	void ExplodeInfection( void );
 
 	int m_iType;
 	float m_flGroundTime;
@@ -176,6 +190,8 @@ void CZPGrenade::Spawn( void )
 
 	if( m_iType == MOLOTOV )
 		SET_MODEL( ENT( pev ), "models/zpmod/w_molotov.mdl" );
+	else if( m_iType == INFECTION )
+		SET_MODEL( ENT( pev ), "models/zpmod/w_hegrenade.mdl" );
 	else
 		SET_MODEL( ENT( pev ), "models/zpmod/w_freezebomb.mdl" );
 
@@ -189,9 +205,13 @@ void CZPGrenade::Precache( void )
 {
 	PRECACHE_MODEL( "models/zpmod/w_molotov.mdl" );
 	PRECACHE_MODEL( "models/zpmod/w_freezebomb.mdl" );
+	PRECACHE_MODEL( "models/zpmod/w_hegrenade.mdl" );
 	PRECACHE_MODEL( "sprites/explode1.spr" );
 	PRECACHE_MODEL( "sprites/fire.spr" );
 	PRECACHE_MODEL( "sprites/shockwave.spr" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_exp.wav" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_bounce_1.wav" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_bounce_2.wav" );
 }
 
 CZPGrenade *CZPGrenade::Shoot( entvars_t *pevOwner, int iType, Vector vecStart, Vector vecVelocity )
@@ -240,6 +260,11 @@ void CZPGrenade::GrenadeTouch( CBaseEntity *pOther )
 	}
 
 	// bounce off pickup-able items, just play the clink
+	if( m_iType == INFECTION )
+	{
+		EMIT_SOUND( ENT( pev ), CHAN_WEAPON, RANDOM_LONG( 0, 1 ) == 0 ? "zpmod/zombi_bomb_bounce_1.wav" : "zpmod/zombi_bomb_bounce_2.wav", 0.9f, ATTN_NORM );
+		return;
+	}
 	int r = RANDOM_LONG( 0, 2 );
 	EMIT_SOUND( ENT( pev ), CHAN_WEAPON, r == 0 ? "weapons/grenade_hit1.wav" : r == 1 ? "weapons/grenade_hit2.wav" : "weapons/grenade_hit3.wav", 0.9f, ATTN_NORM );
 }
@@ -280,6 +305,8 @@ void CZPGrenade::Explode( void )
 {
 	if( m_iType == MOLOTOV )
 		ExplodeMolotov();
+	else if( m_iType == INFECTION )
+		ExplodeInfection();
 	else
 		ExplodeFreeze();
 }
@@ -498,6 +525,102 @@ void CZPGrenade::ExplodeFreeze( void )
 	UTIL_Remove( this );
 }
 
+static int ZPCountAliveHumans( void )
+{
+	int count = 0;
+	for( int i = 1; i <= gpGlobals->maxClients; i++ )
+	{
+		edict_t *ed = INDEXENT( i );
+		if( !ZPIsPlayerConnected( ed ) || !ZPIsHuman( ed ) || ZPIsDead( ed ) )
+			continue;
+		CBasePlayer *p = (CBasePlayer *)GET_PRIVATE( ed );
+		if( !p || !p->IsAlive() )
+			continue;
+		count++;
+	}
+	return count;
+}
+
+void CZPGrenade::ExplodeInfection( void )
+{
+	Vector origin = pev->origin;
+	entvars_t *attacker = m_pevAttacker ? m_pevAttacker : VARS( INDEXENT( 0 ) );
+
+	EMIT_SOUND( ENT( pev ), CHAN_WEAPON, "zpmod/zombi_bomb_exp.wav", 1.0f, ATTN_NORM );
+
+	// green flash, ZP5.0 style
+	MESSAGE_BEGIN( MSG_PVS, SVC_TEMPENTITY, origin );
+		WRITE_BYTE( TE_DLIGHT );
+		WRITE_COORD( origin.x );
+		WRITE_COORD( origin.y );
+		WRITE_COORD( origin.z + 8 );
+		WRITE_BYTE( 30 );  // radius
+		WRITE_BYTE( 30 );  // r
+		WRITE_BYTE( 200 ); // g
+		WRITE_BYTE( 30 );  // b
+		WRITE_BYTE( 8 );   // life
+		WRITE_BYTE( 5 );   // decay
+	MESSAGE_END();
+
+	// expanding green rings
+	for( int ring = 1; ring <= 3; ring++ )
+	{
+		MESSAGE_BEGIN( MSG_PVS, SVC_TEMPENTITY, origin );
+			WRITE_BYTE( TE_BEAMCYLINDER );
+			WRITE_COORD( origin.x );
+			WRITE_COORD( origin.y );
+			WRITE_COORD( origin.z );
+			WRITE_COORD( origin.x );
+			WRITE_COORD( origin.y );
+			WRITE_COORD( origin.z + 385.0f * ring );
+			WRITE_SHORT( MODEL_INDEX( "sprites/shockwave.spr" ) );
+			WRITE_BYTE( 0 );   // startframe
+			WRITE_BYTE( 0 );   // framerate
+			WRITE_BYTE( 4 );   // life
+			WRITE_BYTE( 60 );  // width
+			WRITE_BYTE( 0 );   // noise
+			WRITE_BYTE( 0 );   // r
+			WRITE_BYTE( 200 ); // g
+			WRITE_BYTE( 0 );   // b
+			WRITE_BYTE( 200 ); // brightness
+			WRITE_BYTE( 0 );   // speed
+		MESSAGE_END();
+	}
+
+	ZP_Trace("ZPGREN INFECTION explode at (%.0f %.0f %.0f)\n", origin.x, origin.y, origin.z);
+
+	int humansLeft = ZPCountAliveHumans();
+
+	for( int i = 1; i <= gpGlobals->maxClients; i++ )
+	{
+		edict_t *ed = INDEXENT( i );
+		if( !ZPIsPlayerConnected( ed ) || !ZPIsHuman( ed ) || ZPIsDead( ed ) )
+			continue;
+
+		CBasePlayer *p = (CBasePlayer *)GET_PRIVATE( ed );
+		if( !p || !p->IsAlive() )
+			continue;
+
+		float dist = ( ed->v.origin - origin ).Length();
+		if( dist > ZP_INFECTION_RADIUS )
+			continue;
+
+		ZP_Trace("ZPGREN INFECTION target slot=%d dist=%.0f humansLeft=%d\n", i, dist, humansLeft);
+
+		if( humansLeft > 1 )
+		{
+			ZPInfectPlayer( ed, true );
+			humansLeft--;
+			continue;
+		}
+
+		// last human alive is killed instead of infected, ZP5.0 style
+		p->TakeDamage( attacker, attacker, 10000.0f, DMG_GENERIC );
+	}
+
+	UTIL_Remove( this );
+}
+
 //---------------------------------------------------------------
 // base throw weapon
 //---------------------------------------------------------------
@@ -505,6 +628,8 @@ class CZPThrowGrenade : public CBasePlayerWeapon
 {
 public:
 	void PrimaryAttack( void );
+	void ItemPostFrame( void );
+	void Throw( void );
 	void WeaponIdle( void );
 	BOOL CanHolster( void ) { return ( m_flStartThrow == 0 ); }
 	void Holster( int skiplocal = 0 );
@@ -518,6 +643,15 @@ public:
 	virtual int IdleAnim( void ) const { return 0; }
 	virtual void ShootProjectile( entvars_t *pevOwner, const Vector &vecSrc, const Vector &vecThrow ) = 0;
 
+	// who may use this throwable (humans for molotov/freezebomb,
+	// zombies for the infection bomb)
+	virtual bool UseAllowed( edict_t *ed ) const { return ZPIsHuman( ed ); }
+
+	// per-weapon sound hooks (NULL = silent, keeps molotov/freezebomb behaviour)
+	virtual const char *DeploySound( void ) const { return NULL; }
+	virtual const char *PullSound( void ) const { return NULL; }
+	virtual const char *ThrowSound( void ) const { return NULL; }
+
 protected:
 	float m_flStartThrow;
 	float m_flReleaseThrow;
@@ -526,6 +660,8 @@ protected:
 BOOL CZPThrowGrenade::Deploy( void )
 {
 	m_flReleaseThrow = -1;
+	if( DeploySound() )
+		EMIT_SOUND( ENT( m_pPlayer->pev ), CHAN_WEAPON, DeploySound(), 1.0f, ATTN_NORM );
 	return DefaultDeploy( ViewModelPath(), PlayerModelPath(), DeployAnim(), "crowbar" );
 }
 
@@ -555,21 +691,47 @@ void CZPThrowGrenade::Holster( int skiplocal /* = 0 */ )
 
 void CZPThrowGrenade::PrimaryAttack( void )
 {
-	if( m_pPlayer && !ZPIsHuman( m_pPlayer->edict() ) )
-		return; // zombies can't handle these
+	if( m_pPlayer && !UseAllowed( m_pPlayer->edict() ) )
+		return; // wrong team for this throwable
 
 	if( m_flStartThrow || m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0 )
 		return;
 
-	// Throw immediately - no hold/release state machine. (The previous
-	// version deferred the actual throw to WeaponIdle(), which the engine
-	// only calls while the attack button is NOT held, so holding LMB - or
-	// even a release that didn't register cleanly - left m_flStartThrow
-	// stuck set, which made PrimaryAttack() a permanent no-op afterward.)
+	// Start cooking: pull the pin and wait for the button to be released
+	// (or for ZP_GRENADE_MAX_HOLD to elapse) before the grenade actually
+	// leaves the player's hand. See ItemPostFrame().
 	m_flStartThrow = gpGlobals->time;
 
 	SendWeaponAnim( PullPinAnim() );
+	if( PullSound() )
+		EMIT_SOUND( ENT( m_pPlayer->pev ), CHAN_WEAPON, PullSound(), 1.0f, ATTN_NORM );
+}
 
+void CZPThrowGrenade::ItemPostFrame( void )
+{
+	if( m_flStartThrow )
+	{
+		// Still cooking. Throw the instant the attack button is released,
+		// or after ZP_GRENADE_MAX_HOLD regardless of button state. The
+		// timeout is purely a safety net: it means a missed button-up
+		// event (lag, alt-tab, weapon switch, a menu eating input) can
+		// only ever delay the throw by a few seconds, never leave
+		// m_flStartThrow stuck forever the way the old release-driven
+		// version could.
+		bool bReleased = !( m_pPlayer->pev->button & IN_ATTACK );
+		bool bTimedOut = ( gpGlobals->time - m_flStartThrow ) >= ZP_GRENADE_MAX_HOLD;
+
+		if( bReleased || bTimedOut )
+			Throw();
+
+		return; // don't fall through to the normal attack/idle dispatch while cooking
+	}
+
+	CBasePlayerWeapon::ItemPostFrame();
+}
+
+void CZPThrowGrenade::Throw( void )
+{
 	// NOTE: deliberately NOT adding pev->punchangle here. punchangle is the
 	// view-kick from taking damage, and it isn't clamped - getting hit by
 	// zombies mid-throw (most likely exactly when you're standing still
@@ -598,6 +760,8 @@ void CZPThrowGrenade::PrimaryAttack( void )
 	ShootProjectile( m_pPlayer->pev, vecSrc, vecThrow );
 
 	SendWeaponAnim( ThrowAnim() );
+	if( ThrowSound() )
+		EMIT_SOUND( ENT( m_pPlayer->pev ), CHAN_WEAPON, ThrowSound(), 1.0f, ATTN_NORM );
 
 	// player "shoot" animation
 	m_pPlayer->SetAnimation( PLAYER_ATTACK1 );
@@ -778,4 +942,85 @@ int CWeaponFreezebomb::GetItemInfo( ItemInfo *p )
 void CWeaponFreezebomb::ShootProjectile( entvars_t *pevOwner, const Vector &vecSrc, const Vector &vecThrow )
 {
 	CZPGrenade::Shoot( pevOwner, CZPGrenade::FREEZE, vecSrc, vecThrow );
+}
+
+//---------------------------------------------------------------
+// infection bomb (zombies only)
+//---------------------------------------------------------------
+enum infectionbomb_anim_e
+{
+	INFECTIONBOMB_IDLE = 0,
+	INFECTIONBOMB_PINPULL,
+	INFECTIONBOMB_THROW,
+	INFECTIONBOMB_DEPLOY
+};
+
+class CWeaponInfectionBomb : public CZPThrowGrenade
+{
+public:
+	void Spawn( void );
+	void Precache( void );
+	int GetItemInfo( ItemInfo *p );
+
+	const char *ViewModelPath( void ) const { return "models/zpmod/v_hegrenade.mdl"; }
+	const char *PlayerModelPath( void ) const { return "models/zpmod/p_hegrenade.mdl"; }
+	int PullPinAnim( void ) const { return INFECTIONBOMB_PINPULL; }
+	int ThrowAnim( void ) const { return INFECTIONBOMB_THROW; }
+	int DeployAnim( void ) const { return INFECTIONBOMB_DEPLOY; }
+	int IdleAnim( void ) const { return INFECTIONBOMB_IDLE; }
+	void ShootProjectile( entvars_t *pevOwner, const Vector &vecSrc, const Vector &vecThrow );
+
+	bool UseAllowed( edict_t *ed ) const { return ZPIsZombie( ed ); }
+
+	const char *DeploySound( void ) const { return "zpmod/zombi_bomb_deploy.wav"; }
+	const char *PullSound( void ) const { return "zpmod/zombi_bomb_pull_1.wav"; }
+	const char *ThrowSound( void ) const { return "zpmod/zombi_bomb_throw.wav"; }
+};
+
+LINK_ENTITY_TO_CLASS( weapon_infectionbomb, CWeaponInfectionBomb )
+
+void CWeaponInfectionBomb::Spawn( void )
+{
+	Precache();
+	m_iId = WEAPON_INFECTIONBOMB;
+	SET_MODEL( ENT( pev ), "models/zpmod/w_hegrenade.mdl" );
+	m_iDefaultAmmo = ZP_INFECTIONBOMB_DEFAULT_GIVE;
+	FallInit();
+}
+
+void CWeaponInfectionBomb::Precache( void )
+{
+	PRECACHE_MODEL( "models/zpmod/v_hegrenade.mdl" );
+	PRECACHE_MODEL( "models/zpmod/p_hegrenade.mdl" );
+	PRECACHE_MODEL( "models/zpmod/w_hegrenade.mdl" );
+	PRECACHE_MODEL( "sprites/shockwave.spr" );
+	PRECACHE_GENERIC( "sprites/weapon_infectionbomb.txt" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_deploy.wav" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_pull_1.wav" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_throw.wav" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_exp.wav" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_bounce_1.wav" );
+	PRECACHE_SOUND( "zpmod/zombi_bomb_bounce_2.wav" );
+}
+
+int CWeaponInfectionBomb::GetItemInfo( ItemInfo *p )
+{
+	p->pszName = STRING( pev->classname );
+	p->pszAmmo1 = "InfectionBomb";
+	p->iMaxAmmo1 = ZP_INFECTIONBOMB_MAX_CARRY;
+	p->pszAmmo2 = NULL;
+	p->iMaxAmmo2 = -1;
+	p->iMaxClip = WEAPON_NOCLIP;
+	p->iSlot = 0;
+	p->iPosition = 4;
+	p->iId = m_iId = WEAPON_INFECTIONBOMB;
+	p->iWeight = INFECTIONBOMB_WEIGHT;
+	p->iFlags = ITEM_FLAG_LIMITINWORLD | ITEM_FLAG_EXHAUSTIBLE;
+
+	return 1;
+}
+
+void CWeaponInfectionBomb::ShootProjectile( entvars_t *pevOwner, const Vector &vecSrc, const Vector &vecThrow )
+{
+	CZPGrenade::Shoot( pevOwner, CZPGrenade::INFECTION, vecSrc, vecThrow );
 }

@@ -507,10 +507,12 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     pPlayer->RemoveAllItems(false);
     pPlayer->GiveNamedItem("weapon_crowbar");
     pPlayer->SelectItem("weapon_crowbar");
+    // infection bomb: zombies only, one per infection
+    pPlayer->GiveNamedItem("weapon_infectionbomb");
 
     player->v.team = RoleToInt(ROLE_ZOMBIE);
-    player->v.viewmodel = MAKE_STRING("models/zpmod/v_claws.mdl");
-    player->v.weaponmodel = iStringNull;
+    /* player->v.viewmodel = MAKE_STRING("models/zpmod/v_claws.mdl");
+    player->v.weaponmodel = iStringNull; */
     pPlayer->pev->pain_finished = gpGlobals->time;
 
     ZPSetPlayerModel(player, "zm");
