@@ -153,6 +153,18 @@ void ZPRoundResetPlayer(edict_t* ed) {
             resetModel = "helmet";
         ZPSetPlayerModel(ed, resetModel);
     }
+
+    // every human spawns with the ZP throwables (only humans get them;
+    // zombies are stripped of everything when infected)
+    pPlayer->GiveNamedItem("weapon_molotov");
+    pPlayer->GiveNamedItem("weapon_freezebomb");
+
+    ZP_Trace("ZPRoundResetPlayer gave molotov+freezebomb to slot %d->%d (team=%s weapons=0x%X)\n",
+             ed->v.team, ENTINDEX(ed), ed->v.team == RoleToInt(ROLE_HUMAN) ? "human" : "other",
+             (unsigned int)ed->v.weapons);
+    ALERT(at_console, "ZPDEBUG: gave molotov+freezebomb to slot %d->%d (team=%s weapons=0x%X)\n",
+          ed->v.team, ENTINDEX(ed), ed->v.team == RoleToInt(ROLE_HUMAN) ? "human" : "other",
+          (unsigned int)ed->v.weapons);
 }
 
 static bool joinInProgress = false;
@@ -553,6 +565,14 @@ void ZPMakeHuman(edict_t* ed) {
         if (stricmp(m, "zm") == 0) m = "helmet";
         ZPSetPlayerModel(ed, m);
     }
+
+    pPlayer->GiveNamedItem("weapon_molotov");
+    pPlayer->GiveNamedItem("weapon_freezebomb");
+
+    ZP_Trace("ZPMakeHuman gave molotov+freezebomb to %d (weapons=0x%X)\n",
+             ENTINDEX(ed), (unsigned int)ed->v.weapons);
+    ALERT(at_console, "ZPDEBUG: ZPMakeHuman gave molotov+freezebomb to %d (weapons=0x%X)\n",
+          ENTINDEX(ed), (unsigned int)ed->v.weapons);
 
     UTIL_ScreenFade(pPlayer, Vector(0, 255, 120), 0.4f, 0.2f, 255, FFADE_IN);
 }
@@ -1732,6 +1752,17 @@ void ZPRoundThink(ZPRound* round) {
             if (count > 0) {
                 /* apply the round mode's starting infection */
                 ZPFeatureStartInfections(round, players, count);
+
+                /* hand every surviving human the ZP throwables (first round
+                   has no prior round-end reset to inherit them from) */
+                for (int i = 1; i <= gpGlobals->maxClients; i++) {
+                    edict_t* ed = INDEXENT(i);
+                    if (!ZPIsPlayerConnected(ed) || !ZPIsHuman(ed)) continue;
+                    CBasePlayer* pp = (CBasePlayer*)GET_PRIVATE(ed);
+                    if (!pp || !pp->IsAlive()) continue;
+                    pp->GiveNamedItem("weapon_molotov");
+                    pp->GiveNamedItem("weapon_freezebomb");
+                }
 
                 /* ARMOR event: humans get a full suit at spawn */
                 int armor = ZPFeatureInitialArmor();

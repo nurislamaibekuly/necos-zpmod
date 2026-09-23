@@ -297,8 +297,21 @@ void UTIL_PrecacheOtherWeapon( const char *szClassname )
 }
 
 // called by worldspawn
+void ZP_Trace(const char *fmt, ...)
+{
+	FILE *f = fopen("/tmp/zpmod_debug.log", "a");
+	if (!f) return;
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(f, fmt, ap);
+	va_end(ap);
+	fclose(f);
+}
+
 void W_Precache( void )
 {
+	ZP_Trace("W_Precache ENTER\n");
+	ALERT(at_console, "ZPDEBUG: W_Precache ENTER\n");
 	memset( CBasePlayerItem::ItemInfoArray, 0, sizeof(CBasePlayerItem::ItemInfoArray) );
 	memset( CBasePlayerItem::AmmoInfoArray, 0, sizeof(CBasePlayerItem::AmmoInfoArray) );
 	giAmmoIndex = 0;
@@ -360,6 +373,17 @@ void W_Precache( void )
 #endif
 	// hand grenade
 	UTIL_PrecacheOtherWeapon("weapon_handgrenade");
+	// zpmod grenades (molotov + frost bomb)
+	UTIL_PrecacheOtherWeapon("weapon_molotov");
+	UTIL_PrecacheOtherWeapon("weapon_freezebomb");
+	{
+		ItemInfo II = CBasePlayerItem::ItemInfoArray[WEAPON_MOLOTOV];
+		ALERT(at_console, "ZPDEBUG: weapon_molotov registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
+		ZP_Trace("weapon_molotov registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
+		II = CBasePlayerItem::ItemInfoArray[WEAPON_FREEZEBOMB];
+		ALERT(at_console, "ZPDEBUG: weapon_freezebomb registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
+		ZP_Trace("weapon_freezebomb registered id=%d ammo='%s' slot=%d pos=%d\n", II.iId, II.pszAmmo1 ? II.pszAmmo1 : "?", II.iSlot, II.iPosition);
+	}
 #if !OEM_BUILD && !HLDEMO_BUILD
 	// squeak grenade
 	UTIL_PrecacheOtherWeapon( "weapon_snark" );

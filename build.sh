@@ -36,7 +36,7 @@ fi
 
 if [ "$RUN" = "1" ]; then
 	echo "Starting ZPMod on the valve mod..."
-	exec "$ROOT/game/xash3d" -game valve -dev 5 +exec listenserver.cfg +coop 0 +map crossfire +deathmatch 1 -log
+	exec "$ROOT/game/xash3d" -game valve +exec listenserver.cfg +coop 0 +map crossfire +deathmatch 1 -log
 else
 	echo "Skipping game launch."
 fi

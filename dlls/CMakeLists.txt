@@ -148,6 +148,7 @@ set (SVDLL_SOURCES
 	zpmod/zpmod.cpp
 	zpmod/zpmod_admin.cpp
 	zpmod/zpmod_features.cpp
+	zpmod/zpmod_grenades.cpp
 	zpmod/zpmod_stats.cpp
 	../game_shared/voice_gamemgr.cpp
 	../pm_shared/pm_debug.c

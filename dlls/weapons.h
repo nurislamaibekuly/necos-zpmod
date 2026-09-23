@@ -78,6 +78,8 @@ public:
 #define WEAPON_TRIPMINE			13
 #define	WEAPON_SATCHEL			14
 #define	WEAPON_SNARK			15
+#define WEAPON_MOLOTOV			16	// zpmod: molotov, humans only
+#define WEAPON_FREEZEBOMB		17	// zpmod: freeze grenade, humans only
 
 #define WEAPON_ALLWEAPONS		(~(1<<WEAPON_SUIT))
 
@@ -98,6 +100,8 @@ public:
 #define HORNETGUN_WEIGHT	15
 #define HANDGRENADE_WEIGHT	5
 #define SNARK_WEIGHT		5
+#define MOLOTOV_WEIGHT		5
+#define FREEZEBOMB_WEIGHT	5
 #define SATCHEL_WEIGHT		-10
 #define TRIPMINE_WEIGHT		-10
 
@@ -109,6 +113,8 @@ public:
 #define BOLT_MAX_CARRY			50
 #define ROCKET_MAX_CARRY		5
 #define HANDGRENADE_MAX_CARRY	10
+#define MOLOTOV_MAX_CARRY		5
+#define FREEZEBOMB_MAX_CARRY	5
 #define SATCHEL_MAX_CARRY		5
 #define TRIPMINE_MAX_CARRY		5
 #define SNARK_MAX_CARRY			15

@@ -2,6 +2,11 @@
 
 #include "extdll.h"
 #include "edict.h"
+#include <stdarg.h>
+#include <stdio.h>
+
+// appends to /tmp/zpmod_debug.log; survives console ALERT suppression
+void ZP_Trace(const char *fmt, ...);
 
 enum RoundState {
     RS_PREP,
