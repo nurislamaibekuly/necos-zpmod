@@ -137,6 +137,8 @@ struct ZPPlayer {
     float slowUntil;      // post-infection slowdown
     float eventSlowUntil;
     int credits;         // spendable shop currency (50 on join, +per kill)
+    int shopWeapons;     // persistent human shop-purchased weapons (bitmask)
+    bool diedThisRound;  // died during the round -> shop weapons are forfeited
 };
 
 extern ZPRound g_round;

@@ -167,6 +167,30 @@ void ZPRoundResetPlayer(edict_t* ed) {
     ALERT(at_console, "ZPDEBUG: gave molotov+freezebomb to slot %d->%d (team=%s weapons=0x%X)\n",
           ed->v.team, ENTINDEX(ed), ed->v.team == RoleToInt(ROLE_HUMAN) ? "human" : "other",
           (unsigned int)ed->v.weapons);
+
+    // shop purchases survive round resets for players who survived the round;
+    // dying during the round forfeits them (the default kit above was re-given)
+    if (g_players[idx].diedThisRound) {
+        g_players[idx].shopWeapons = 0;
+    } else if (g_players[idx].shopWeapons) {
+        if (g_players[idx].shopWeapons & (1 << 0)) {
+            pPlayer->GiveNamedItem((char*)"weapon_python");
+            pPlayer->GiveNamedItem((char*)"ammo_357");
+        }
+        if (g_players[idx].shopWeapons & (1 << 1)) {
+            pPlayer->GiveNamedItem((char*)"weapon_shotgun");
+            pPlayer->GiveNamedItem((char*)"ammo_buckshot");
+        }
+        if (g_players[idx].shopWeapons & (1 << 2)) {
+            pPlayer->GiveNamedItem((char*)"weapon_crossbow");
+            pPlayer->GiveNamedItem((char*)"ammo_crossbow");
+        }
+        if (g_players[idx].shopWeapons & (1 << 3)) {
+            pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
+            pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
+        }
+    }
+    g_players[idx].diedThisRound = false;
 }
 
 static bool joinInProgress = false;
@@ -187,6 +211,8 @@ void ZPPlayerJoin(edict_t* player) {
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
     g_players[idx].credits = 50; // first-join allowance for the weapon shop
+    g_players[idx].shopWeapons = 0;
+    g_players[idx].diedThisRound = false;
 
     char modelName[64] = "player"; // def player model btw
 
@@ -656,6 +682,11 @@ CBaseEntity* ZPZombieCheckHit(CBasePlayer* pPlayer, float range, TraceResult* pt
 bool ZPDied(edict_t* player, int attackerIndex) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer) return false;
+
+    // dying during the round forfeits shop purchases at the next round reset
+    int vIdx = ENTINDEX(player);
+    if (vIdx >= 1 && vIdx <= gpGlobals->maxClients && g_round.state == RS_ACTIVE)
+        g_players[vIdx].diedThisRound = true;
 
     ZPFeatureOnDied(player);
     ZPStatsOnDied(player);
@@ -1546,14 +1577,17 @@ void ZPShopSelect(int playerIndex, int slot)
             EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
         } else if (slot == 4) {
             ZPShopGiveWeapon(pPlayer, "weapon_python", "ammo_357");
+            g_players[playerIndex].shopWeapons |= (1 << 0); // persists across rounds
             okMsg = "REVOLVER .357";
             EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
         } else if (slot == 5) {
             ZPShopGiveWeapon(pPlayer, "weapon_shotgun", "ammo_buckshot");
+            g_players[playerIndex].shopWeapons |= (1 << 1);
             okMsg = "SHOTGUN";
             EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
         } else if (slot == 6) {
             ZPShopGiveWeapon(pPlayer, "weapon_crossbow", "ammo_crossbow");
+            g_players[playerIndex].shopWeapons |= (1 << 2);
             okMsg = "CROSSBOW";
             EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
         } else if (slot == 7) {
@@ -1567,6 +1601,7 @@ void ZPShopSelect(int playerIndex, int slot)
         } else if (slot == 8) {
             pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
             pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
+            g_players[playerIndex].shopWeapons |= (1 << 3);
             okMsg = "GRENADES x2";
             EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
         }
