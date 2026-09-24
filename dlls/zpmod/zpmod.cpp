@@ -156,41 +156,13 @@ void ZPRoundResetPlayer(edict_t* ed) {
         ZPSetPlayerModel(ed, resetModel);
     }
 
-    // every human spawns with the ZP throwables (only humans get them;
-    // zombies are stripped of everything when infected)
     pPlayer->GiveNamedItem("weapon_molotov");
     pPlayer->GiveNamedItem("weapon_freezebomb");
 
-    ZP_Trace("ZPRoundResetPlayer gave molotov+freezebomb to slot %d->%d (team=%s weapons=0x%X)\n",
-             ed->v.team, ENTINDEX(ed), ed->v.team == RoleToInt(ROLE_HUMAN) ? "human" : "other",
-             (unsigned int)ed->v.weapons);
-    ALERT(at_console, "ZPDEBUG: gave molotov+freezebomb to slot %d->%d (team=%s weapons=0x%X)\n",
-          ed->v.team, ENTINDEX(ed), ed->v.team == RoleToInt(ROLE_HUMAN) ? "human" : "other",
-          (unsigned int)ed->v.weapons);
-
-    // shop purchases survive round resets for players who survived the round;
-    // dying during the round forfeits them (the default kit above was re-given)
-    if (g_players[idx].diedThisRound) {
-        g_players[idx].shopWeapons = 0;
-    } else if (g_players[idx].shopWeapons) {
-        if (g_players[idx].shopWeapons & (1 << 0)) {
-            pPlayer->GiveNamedItem((char*)"weapon_python");
-            pPlayer->GiveNamedItem((char*)"ammo_357");
-        }
-        if (g_players[idx].shopWeapons & (1 << 1)) {
-            pPlayer->GiveNamedItem((char*)"weapon_shotgun");
-            pPlayer->GiveNamedItem((char*)"ammo_buckshot");
-        }
-        if (g_players[idx].shopWeapons & (1 << 2)) {
-            pPlayer->GiveNamedItem((char*)"weapon_crossbow");
-            pPlayer->GiveNamedItem((char*)"ammo_crossbow");
-        }
-        if (g_players[idx].shopWeapons & (1 << 3)) {
-            pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
-            pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
-        }
-    }
-    g_players[idx].diedThisRound = false;
+    ZP_Trace("ZPRoundResetPlayer gave molotov+freezebomb to slot %d (team=%d weapons=0x%X)\n",
+             ENTINDEX(ed), ed->v.team, (unsigned int)ed->v.weapons);
+    ALERT(at_console, "ZPDEBUG: gave molotov+freezebomb to slot %d (team=%d weapons=0x%X)\n",
+          ENTINDEX(ed), ed->v.team, (unsigned int)ed->v.weapons);
 }
 
 static bool joinInProgress = false;
@@ -210,9 +182,6 @@ void ZPPlayerJoin(edict_t* player) {
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
-    g_players[idx].credits = 50; // first-join allowance for the weapon shop
-    g_players[idx].shopWeapons = 0;
-    g_players[idx].diedThisRound = false;
 
     char modelName[64] = "player"; // def player model btw
 
@@ -408,7 +377,6 @@ void ZPApplyZombieClass(edict_t* player)
 
     player->v.movetype = MOVETYPE_WALK;
     player->v.maxspeed = speed + ZPFeatureSpeedMultiplier();
-    // shop-bought speed boost temporarily lifts zombie speed
     if (g_players[idx].adrenalineUntil > gpGlobals->time)
         player->v.maxspeed = speed * 1.3f + ZPFeatureSpeedMultiplier();
     player->v.gravity = gravity * ZPFeatureGravity();
@@ -458,7 +426,6 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     if (idx < 1 || idx > gpGlobals->maxClients) return;
 
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
-    g_players[idx].diedThisRound = true; // infection is a death for shop purposes
 
     bool forceBoss = g_players[idx].bossRoundStart;
     g_players[idx].bossRoundStart = false;
@@ -686,11 +653,6 @@ CBaseEntity* ZPZombieCheckHit(CBasePlayer* pPlayer, float range, TraceResult* pt
 bool ZPDied(edict_t* player, int attackerIndex) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer) return false;
-
-    // dying during the round forfeits shop purchases at the next round reset
-    int vIdx = ENTINDEX(player);
-    if (vIdx >= 1 && vIdx <= gpGlobals->maxClients && g_round.state == RS_ACTIVE)
-        g_players[vIdx].diedThisRound = true;
 
     ZPFeatureOnDied(player);
     ZPStatsOnDied(player);
@@ -1030,8 +992,8 @@ void ZPHUD()
         }
         else if (ed->v.team == RoleToInt(ROLE_SPECTATOR)) className = "Spectator";
 
-        char buf[100];
-        snprintf(buf, sizeof(buf), "HP %d  |  %s  |  CR %d", hp, className, g_players[i].credits);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "HP %d  |  %s", hp, className);
 
         hudtextparms_t info;
         memset(&info, 0, sizeof(info));
@@ -1228,15 +1190,6 @@ void ZPKillReward(edict_t* killer, bool fromHeadshot) {
 
     g_players[idx].kills++;
 
-    // credits: 10 body / 20 headshot, multiplied by the active kill streak
-    // (2x at 3 kills, 3x at 5, 5x at 10) — the streak counter is bumped by
-    // ZPFeatureOnKill right after us, so count this frag as the new streak
-    int streak = g_players[idx].killStreak + 1;
-    int mult = (streak >= 10) ? 5 : (streak >= 5) ? 3 : (streak >= 3) ? 2 : 1;
-    int base = fromHeadshot ? 20 : 10;
-    int gained = base * mult;
-    g_players[idx].credits += gained;
-
     pPlayer->pev->health += fromHeadshot ? 50.0f : 25.0f;
     if (pPlayer->pev->health > 200) pPlayer->pev->health = 200;
 
@@ -1251,14 +1204,7 @@ void ZPKillReward(edict_t* killer, bool fromHeadshot) {
     params.fadeoutTime = 0.5f;
     params.holdTime = 1.5f;
 
-    char msg[64];
-    if (mult > 1)
-        snprintf(msg, sizeof(msg), "%s  +%d CR (x%d streak)",
-                 fromHeadshot ? "HEADSHOT KILL  +50 HP" : "KILL BONUS  +25 HP", gained, mult);
-    else
-        snprintf(msg, sizeof(msg), "%s  +%d CR",
-                 fromHeadshot ? "HEADSHOT KILL  +50 HP" : "KILL BONUS  +25 HP", gained);
-    if (g_players[idx].credits > 9999) g_players[idx].credits = 9999;
+    const char* msg = fromHeadshot ? "HEADSHOT KILL  +50 HP" : "KILL BONUS  +25 HP";
     UTIL_HudMessage(CBaseEntity::Instance(killer), params, msg);
 }
 
@@ -1268,10 +1214,6 @@ void ZPPlayerThink(edict_t* player) {
 
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
-
-    // shop may be opened at any time (countdown, mid-round, even after the
-    // winner banner) — the shops own the HUD in the way their pre-round
-    // drops do, so no round-state gate is applied
 
     if (ZPIsZombie(player)) {
         // keep the crowbar's third-person worldmodel hidden, only the claw viewmodel stays
@@ -1425,224 +1367,8 @@ void ZPAbilitySelect(int playerIndex, int slot)
     UTIL_HudMessage(CBaseEntity::Instance(ed), fb, fmsg);
 }
 
-void ZPShopGiveWeapon(CBasePlayer* pPlayer, const char* weapon, const char* ammo)
-{
-    if (!pPlayer || !weapon) return;
-    pPlayer->GiveNamedItem((char*)weapon);
-    if (ammo) pPlayer->GiveNamedItem((char*)ammo);
-    pPlayer->SelectItem((char*)weapon);
-}
-
-void ZPShopOpen(edict_t* player)
-{
-    if (!player) return;
-    int idx = ENTINDEX(player);
-    if (idx < 1 || idx > gpGlobals->maxClients) return;
-    if (!ZPIsPlayerConnected(player)) return;
-
-    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
-    if (!pPlayer || !pPlayer->IsAlive()) return;
-
-    // the map vote owns the menu channel while it is up
-    if (g_mapVote.active || g_players[idx].menuType == ZPMENU_VOTE) return;
-
-    char text[512];
-    int bits;
-    if (ZPIsHuman(player)) {
-        bits = 0x0FF;
-        snprintf(text, sizeof(text),
-            "WEAPON SHOP   (CR %d)\n\n"
-            "1. Heal +50 HP........... 30 CR\n"
-            "2. Full Armor............ 40 CR\n"
-            "3. Ammo Pack............. 25 CR\n"
-            "4. Revolver .357......... 60 CR\n"
-            "5. Shotgun............... 70 CR\n"
-            "6. Crossbow.............. 90 CR\n"
-            "7. Max HP +50............ 100 CR\n"
-            "8. Grenades x2........... 30 CR",
-            g_players[idx].credits);
-    } else {
-        bits = 0x00F;
-        snprintf(text, sizeof(text),
-            "ZOMBIE SHOP   (CR %d)\n\n"
-            "1. Heal +50 HP........... 30 CR\n"
-            "2. Max HP +50............ 100 CR\n"
-            "3. Speed Boost 10s....... 40 CR\n"
-            "4. Infection Bomb........ 50 CR",
-            g_players[idx].credits);
-    }
-
-    MESSAGE_BEGIN(MSG_ONE, gmsgShowMenu, NULL, player);
-        WRITE_SHORT(bits);
-        WRITE_CHAR(15);   // 15s to browse
-        WRITE_BYTE(0);
-        WRITE_STRING(text);
-    MESSAGE_END();
-
-    g_players[idx].menuType = ZPMENU_SHOP;
-}
-
-void ZPShopSelect(int playerIndex, int slot)
-{
-    if (playerIndex < 1 || playerIndex > gpGlobals->maxClients) return;
-    if (g_players[playerIndex].menuType != ZPMENU_SHOP) return;
-
-    edict_t* player = INDEXENT(playerIndex);
-    if (!ZPIsPlayerConnected(player)) return;
-    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
-    if (!pPlayer || !pPlayer->IsAlive()) return;
-
-    bool isHuman = ZPIsHuman(player);
-    int cost = 0;
-    int credits = g_players[playerIndex].credits;
-
-    if (slot == 1) {           // heal
-        cost = 30;
-        if (pPlayer->pev->health >= pPlayer->pev->max_health
-            && pPlayer->pev->health >= 100.0f) {
-            // store is dumb about healing someone already full
-            g_players[playerIndex].menuType = ZPMENU_NONE;
-            hudtextparms_t e;
-            memset(&e, 0, sizeof(e));
-            e.channel = 0; e.x = -1; e.y = 0.3f; e.a1 = 255;
-            e.fadeinTime = 0.05f; e.fadeoutTime = 0.4f; e.holdTime = 1.2f;
-            e.r1 = 255; e.g1 = 40; e.b1 = 40;
-            UTIL_HudMessage(CBaseEntity::Instance(player), e, "ALREADY FULL HP");
-            return;
-        }
-    } else if (slot == 2) {    // armor (humans) / max hp (zombies)
-        cost = isHuman ? 40 : 100;
-    } else if (slot == 3) {    // ammo (humans) / speed (zombies)
-        cost = isHuman ? 25 : 40;
-    } else if (slot == 4) {    // revolver (humans) / infection bomb (zombies)
-        cost = isHuman ? 60 : 50;
-    } else if (slot == 5) {    // shotgun
-        cost = 70;
-    } else if (slot == 6) {    // crossbow
-        cost = 90;
-    } else if (slot == 7) {    // max hp (humans only)
-        cost = 100;
-    } else if (slot == 8) {    // grenades (humans only)
-        cost = 30;
-    } else {
-        g_players[playerIndex].menuType = ZPMENU_NONE;
-        return;
-    }
-
-    if (!isHuman && slot > 4) {
-        g_players[playerIndex].menuType = ZPMENU_NONE;
-        return; // zombie menu only has 4 entries
-    }
-
-    if (credits < cost) {
-        // redraw the shop so they can afford something else
-        hudtextparms_t e;
-        memset(&e, 0, sizeof(e));
-        e.channel = 0; e.x = -1; e.y = 0.3f; e.a1 = 255;
-        e.fadeinTime = 0.05f; e.fadeoutTime = 0.4f; e.holdTime = 1.2f;
-        e.r1 = 255; e.g1 = 90; e.b1 = 40;
-        UTIL_HudMessage(CBaseEntity::Instance(player), e, "NOT ENOUGH CREDITS");
-        ZPShopOpen(player);
-        return;
-    }
-
-    g_players[playerIndex].credits -= cost;
-    g_players[playerIndex].menuType = ZPMENU_NONE;
-
-    const char* okMsg = "OK";
-    int r = 80, g = 255, b = 90;
-
-    if (isHuman) {
-        if (slot == 1) {
-            pPlayer->pev->health += 50.0f;
-            if (pPlayer->pev->health > pPlayer->pev->max_health)
-                pPlayer->pev->health = pPlayer->pev->max_health;
-            okMsg = "HEALED +50 HP";
-            EMIT_SOUND(player, CHAN_ITEM, "items/smallmedkit1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 2) {
-            pPlayer->pev->armorvalue = 100.0f;
-            okMsg = "FULL ARMOR";
-            EMIT_SOUND(player, CHAN_ITEM, "items/suitchargeok.wav", 1.0, ATTN_NORM);
-        } else if (slot == 3) {
-            pPlayer->GiveNamedItem((char*)"ammo_9mmclip");
-            pPlayer->GiveNamedItem((char*)"ammo_9mmclip");
-            pPlayer->GiveNamedItem((char*)"ammo_buckshot");
-            pPlayer->GiveNamedItem((char*)"ammo_357");
-            okMsg = "AMMO PACK";
-            EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 4) {
-            ZPShopGiveWeapon(pPlayer, "weapon_python", "ammo_357");
-            g_players[playerIndex].shopWeapons |= (1 << 0); // persists across rounds
-            okMsg = "REVOLVER .357";
-            EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 5) {
-            ZPShopGiveWeapon(pPlayer, "weapon_shotgun", "ammo_buckshot");
-            g_players[playerIndex].shopWeapons |= (1 << 1);
-            okMsg = "SHOTGUN";
-            EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 6) {
-            ZPShopGiveWeapon(pPlayer, "weapon_crossbow", "ammo_crossbow");
-            g_players[playerIndex].shopWeapons |= (1 << 2);
-            okMsg = "CROSSBOW";
-            EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 7) {
-            pPlayer->pev->max_health += 50.0f;
-            if (pPlayer->pev->max_health > 200.0f) pPlayer->pev->max_health = 200.0f;
-            pPlayer->pev->health += 50.0f;
-            if (pPlayer->pev->health > pPlayer->pev->max_health)
-                pPlayer->pev->health = pPlayer->pev->max_health;
-            okMsg = "MAX HP +50";
-            EMIT_SOUND(player, CHAN_ITEM, "items/smallmedkit1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 8) {
-            pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
-            pPlayer->GiveNamedItem((char*)"weapon_handgrenade");
-            g_players[playerIndex].shopWeapons |= (1 << 3);
-            okMsg = "GRENADES x2";
-            EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
-        }
-    } else {
-        if (slot == 1) {
-            pPlayer->pev->health += 50.0f;
-            if (pPlayer->pev->health > pPlayer->pev->max_health)
-                pPlayer->pev->health = pPlayer->pev->max_health;
-            okMsg = "HEALED +50 HP";
-            EMIT_SOUND(player, CHAN_ITEM, "items/smallmedkit1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 2) {
-            pPlayer->pev->max_health += 50.0f;
-            if (pPlayer->pev->max_health > 200.0f) pPlayer->pev->max_health = 200.0f;
-            pPlayer->pev->health += 50.0f;
-            if (pPlayer->pev->health > pPlayer->pev->max_health)
-                pPlayer->pev->health = pPlayer->pev->max_health;
-            okMsg = "MAX HP +50";
-            EMIT_SOUND(player, CHAN_ITEM, "items/smallmedkit1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 3) {
-            g_players[playerIndex].adrenalineUntil = gpGlobals->time + 10.0f;
-            okMsg = "SPEED BOOST 10s";
-            EMIT_SOUND(player, CHAN_ITEM, "items/suitchargeno1.wav", 1.0, ATTN_NORM);
-        } else if (slot == 4) {
-            ZPShopGiveWeapon(pPlayer, "weapon_infectionbomb", NULL);
-            okMsg = "INFECTION BOMB";
-            EMIT_SOUND(player, CHAN_ITEM, "items/9mmclip1.wav", 1.0, ATTN_NORM);
-        }
-    }
-
-    hudtextparms_t fb;
-    memset(&fb, 0, sizeof(fb));
-    fb.channel = 0;
-    fb.x = -1;
-    fb.y = 0.3f;
-    fb.a1 = 255;
-    fb.fadeinTime = 0.05f;
-    fb.fadeoutTime = 0.4f;
-    fb.holdTime = 1.4f;
-    fb.r1 = r; fb.g1 = g; fb.b1 = b;
-
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%s   (CR %d)", okMsg, g_players[playerIndex].credits);
-    UTIL_HudMessage(CBaseEntity::Instance(player), fb, buf);
-}
-
 void ZPFreezePlayers(bool freeze) {
+
     for (int i = 1; i <= gpGlobals->maxClients; i++) {
         edict_t* ed = INDEXENT(i);
         if (!ZPIsPlayerConnected(ed)) continue;

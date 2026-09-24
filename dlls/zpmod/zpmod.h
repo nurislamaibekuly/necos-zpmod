@@ -86,7 +86,6 @@ struct ZPRound {
 #define ZPMENU_NONE     0
 #define ZPMENU_VOTE     1
 #define ZPMENU_ABILITY  2
-#define ZPMENU_SHOP     3
 
 struct ZPMapVote {
     bool active;
@@ -136,9 +135,6 @@ struct ZPPlayer {
     bool bossRoundStart;  // forced to spawn as a BOSS zombie when infected
     float slowUntil;      // post-infection slowdown
     float eventSlowUntil;
-    int credits;         // spendable shop currency (50 on join, +per kill)
-    int shopWeapons;     // persistent human shop-purchased weapons (bitmask)
-    bool diedThisRound;  // died during the round -> shop weapons are forfeited
 };
 
 extern ZPRound g_round;
@@ -149,8 +145,6 @@ void ZPModInit(void);
 void ZPModGrenadeInit(void);
 void ZPCleanupWorld(void);
 void ZPRoundThink(ZPRound* round);
-void ZPShopOpen(edict_t* player);
-void ZPShopSelect(int playerIndex, int slot);
 void ZPFeatureInit(void);
 void ZPFeaturePreRound(ZPRound* round);
 const char* ZPModeName(int mode);

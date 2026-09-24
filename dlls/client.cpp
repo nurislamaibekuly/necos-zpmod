@@ -506,13 +506,6 @@ void ClientCommand( edict_t *pEntity )
 
 	if( FStrEq( pcmd, "say" ) )
 	{
-		// zpmod: "say buy" / "say shop" opens the weapon shop
-		if( CMD_ARGC() > 1 && ( FStrEq( CMD_ARGV( 1 ), "buy" ) || FStrEq( CMD_ARGV( 1 ), "shop" )
-			|| FStrEq( CMD_ARGV( 1 ), "/buy" ) || FStrEq( CMD_ARGV( 1 ), "/shop" ) ) )
-		{
-			ZPShopOpen( pEntity );
-			return;
-		}
 		Host_Say( pEntity, 0 );
 	}
 	else if( FStrEq( pcmd, "say_team" ) )
@@ -642,10 +635,6 @@ void ClientCommand( edict_t *pEntity )
 		else if( g_players[idx].menuType == ZPMENU_ABILITY )
 		{
 			ZPAbilitySelect( idx, slot );
-		}
-		else if( g_players[idx].menuType == ZPMENU_SHOP )
-		{
-			ZPShopSelect( idx, slot );
 		}
 	}
 	else if( FStrEq( pcmd, "follownext" ) )	// follow next player
