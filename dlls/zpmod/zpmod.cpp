@@ -26,6 +26,8 @@ extern int gmsgTextMsg;
 
 void ZPRoundWinSound(edict_t* player, const char* winSound, const char* ambientPrefix, int ambientCount);
 
+void FindHullIntersection( const Vector &vecSrc, TraceResult &tr, float *mins, float *maxs, edict_t *pEntity );
+
 int RoleToInt(Role r) {
     switch(r) {
         case ROLE_HUMAN: return 1;
@@ -620,12 +622,26 @@ void ZPForceRoundEnd(int winner) {
 
 CBaseEntity* ZPZombieCheckHit(CBasePlayer* pPlayer, float range, TraceResult* ptr)
 {
-    UTIL_MakeVectors(pPlayer->pev->angles);
+    // claw registration mirrors the crowbar: aim with the *view* angles (not
+    // pev->angles, which drops vertical pitch and makes the swing unable to
+    // hit anyone above/below you) and fall back to a head-hull trace so
+    // grazes still connect instead of whiffing a pixel off
+    UTIL_MakeVectors(pPlayer->pev->v_angle);
     Vector vecSrc = pPlayer->pev->origin + pPlayer->pev->view_ofs;
     Vector vecEnd = vecSrc + gpGlobals->v_forward * range;
 
-    // trace that hits monsters players too
     UTIL_TraceLine(vecSrc, vecEnd, dont_ignore_monsters, pPlayer->edict(), ptr);
+
+    if (ptr->flFraction >= 1.0f)
+    {
+        UTIL_TraceHull(vecSrc, vecEnd, dont_ignore_monsters, head_hull, pPlayer->edict(), ptr);
+        if (ptr->flFraction < 1.0f && ptr->pHit)
+        {
+            CBaseEntity* pHit = CBaseEntity::Instance(ptr->pHit);
+            if (pHit && pHit->IsBSPModel())
+                FindHullIntersection(vecSrc, *ptr, VEC_DUCK_HULL_MIN, VEC_DUCK_HULL_MAX, pPlayer->edict());
+        }
+    }
 
     if (ptr->flFraction < 1.0f && ptr->pHit && ENTINDEX(ptr->pHit) != 0) {
         return CBaseEntity::Instance(ptr->pHit); // not world
@@ -734,13 +750,13 @@ void ZPZombieSwing(edict_t* player)
         // ReZombie-style claw: deals melee damage per hit (class-dependent).
         // Armor absorbs part of it; a killing blow from a zombie converts the
         // victim (handled in ZPDied).
-        float dmg = 40.0f * ZPFeatureClawMultiplier();
+        float dmg = 50.0f * ZPFeatureClawMultiplier();
         switch (g_players[idx].ZMClass) {
-            case ZM_CLASS_FAST:   dmg = 30.0f * ZPFeatureClawMultiplier(); break;
-            case ZM_CLASS_TANK:   dmg = 55.0f * ZPFeatureClawMultiplier(); break;
-            case ZM_CLASS_JUMPER: dmg = 32.0f * ZPFeatureClawMultiplier(); break;
-            case ZM_CLASS_BOSS:   dmg = 60.0f * ZPFeatureClawMultiplier(); break;
-            default:              dmg = 40.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_FAST:   dmg = 42.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_TANK:   dmg = 65.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_JUMPER: dmg = 40.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_BOSS:   dmg = 72.0f * ZPFeatureClawMultiplier(); break;
+            default:              dmg = 50.0f * ZPFeatureClawMultiplier(); break;
         }
         pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_SLASH);
 
