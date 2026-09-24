@@ -449,12 +449,16 @@ void ZPApplyHumanOverlay(edict_t* player)
 }
 
 void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
+    ZP_Trace("ZPInfectPlayer enter slot=%d state=%d\n",
+             ENTINDEX(player), (int)g_round.state);
+
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer) return;
     int idx = ENTINDEX(player);
     if (idx < 1 || idx > gpGlobals->maxClients) return;
 
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].diedThisRound = true; // infection is a death for shop purposes
 
     bool forceBoss = g_players[idx].bossRoundStart;
     g_players[idx].bossRoundStart = false;
@@ -1274,7 +1278,9 @@ void ZPPlayerThink(edict_t* player) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
 
-    if (g_round.state != RS_ACTIVE) return;
+    // shop may be opened at any time (countdown, mid-round, even after the
+    // winner banner) — the shops own the HUD in the way their pre-round
+    // drops do, so no round-state gate is applied
 
     if (ZPIsZombie(player)) {
         // keep the crowbar's third-person worldmodel hidden, only the claw viewmodel stays

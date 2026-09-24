@@ -9,6 +9,8 @@ JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 
 cmake -S "$ROOT" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_FLAGS="-g" \
+  -DCMAKE_CXX_FLAGS="-g" \
   -DBUILD_SERVER=ON \
   -DBUILD_CLIENT=OFF \
   -DGAMEDIR="$GAMEDIR"
