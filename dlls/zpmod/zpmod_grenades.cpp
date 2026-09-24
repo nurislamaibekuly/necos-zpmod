@@ -652,6 +652,8 @@ public:
 	BOOL CanHolster( void ) { return ( m_flStartThrow == 0 ); }
 	void Holster( int skiplocal = 0 );
 	virtual BOOL Deploy( void );
+	void ScheduleEmptyRetire( void );
+	void RetireThink( void );
 
 	virtual const char *ViewModelPath( void ) const = 0;
 	virtual const char *PlayerModelPath( void ) const = 0;
@@ -673,10 +675,12 @@ public:
 protected:
 	float m_flStartThrow;
 	float m_flReleaseThrow;
+	bool m_bRetirePending;
 };
 
 BOOL CZPThrowGrenade::Deploy( void )
 {
+	m_bRetirePending = false;
 	m_flReleaseThrow = -1;
 	if( DeploySound() )
 		EMIT_SOUND( ENT( m_pPlayer->pev ), CHAN_WEAPON, DeploySound(), 1.0f, ATTN_NORM );
@@ -685,6 +689,13 @@ BOOL CZPThrowGrenade::Deploy( void )
 
 void CZPThrowGrenade::Holster( int skiplocal /* = 0 */ )
 {
+	if( m_pPlayer == NULL )
+	{
+		SetThink( &CBaseEntity::SUB_Remove );
+		pev->nextthink = gpGlobals->time + 0.1f;
+		return;
+	}
+
 	m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.5f;
 
 	if( m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] )
@@ -693,9 +704,16 @@ void CZPThrowGrenade::Holster( int skiplocal /* = 0 */ )
 	}
 	else
 	{
-		// no more grenades!
+		// Never DestroyItem() from Holster(). Holster() runs from inside the
+		// engine's weapon-switch / RetireWeapon / RemoveAllItems machinery,
+		// while those are walking m_rgpPlayerItems[]. Re-entering
+		// RemovePlayerItem() there unlinks + Kill()s the item (deferred free)
+		// mid-walk, leaving a freed CBasePlayerItem linked in the inventory;
+		// CBasePlayer::UpdateClientData() then dereferences the stale pointer
+		// on the next frame (observed SIGSEGV). Clear the HUD bit now and
+		// retire the item from the frame's think queue instead.
 		m_pPlayer->pev->weapons &= ~( 1 << m_iId );
-		DestroyItem();
+		ScheduleEmptyRetire();
 	}
 
 	if( m_flStartThrow )
@@ -705,6 +723,36 @@ void CZPThrowGrenade::Holster( int skiplocal /* = 0 */ )
 	}
 
 	EMIT_SOUND( ENT( m_pPlayer->pev ), CHAN_WEAPON, "common/null.wav", 1.0f, ATTN_NORM );
+}
+
+void CZPThrowGrenade::ScheduleEmptyRetire( void )
+{
+	if( m_bRetirePending || !m_pPlayer )
+		return;
+
+	m_bRetirePending = true;
+	pev->nextthink = gpGlobals->time + 0.01f;
+	SetThink( &CZPThrowGrenade::RetireThink );
+}
+
+void CZPThrowGrenade::RetireThink( void )
+{
+	SetThink( NULL );
+	pev->nextthink = 0.0f;
+	m_bRetirePending = false;
+
+	// Runs at the top of a server frame, outside any weapon-switch /
+	// RemoveAllItems walk, so unlink + removal here is safe.
+	if( m_pPlayer && m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] == 0 )
+	{
+		m_pPlayer->pev->weapons &= ~( 1 << m_iId );
+		m_pPlayer->RemovePlayerItem( this, false );
+		m_pPlayer = NULL;
+	}
+
+	SetTouch( NULL );
+	SetThink( &CBaseEntity::SUB_Remove );
+	pev->nextthink = gpGlobals->time + 0.1f;
 }
 
 void CZPThrowGrenade::PrimaryAttack( void )
@@ -809,6 +857,10 @@ void CZPThrowGrenade::WeaponIdle( void )
 	}
 	else
 	{
+		// spent throwable: drop it from the HUD and unlink it from the
+		// inventory via the safe next-frame retire (see Holster()).
+		m_pPlayer->pev->weapons &= ~( 1 << m_iId );
+		ScheduleEmptyRetire();
 		RetireWeapon();
 	}
 }
