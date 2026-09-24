@@ -213,5 +213,20 @@ install(TARGETS ${SVDLL_LIBRARY}
 if(CMAKE_BUILD_TYPE MATCHES "Release" AND NOT WIN32)
 	add_custom_command(TARGET ${SVDLL_LIBRARY}
 			POST_BUILD
-			COMMAND ${CMAKE_STRIP} $<$<PLATFORM_ID:Darwin>:-S>$<$<NOT:$<PLATFORM_ID:Darwin>>:-s> $<TARGET_FILE:${SVDLL_LIBRARY}>)
+			# Darwin: strip -S also removes the DWARF debug info, which the
+			# engine's crash logger needs to resolve backtraces (it runs
+			# dsymutil itself when a dylib is missing its dSYM). Use -x so
+			# only non-debug locals are dropped; on other platforms -s is
+			# fine because we ship a matching .dSYM via dsymutil below.
+			COMMAND ${CMAKE_STRIP} $<$<PLATFORM_ID:Darwin>:-x>$<$<NOT:$<PLATFORM_ID:Darwin>>:-s> $<TARGET_FILE:${SVDLL_LIBRARY}>)
+	if(APPLE)
+		add_custom_command(TARGET ${SVDLL_LIBRARY}
+			POST_BUILD
+			# produce zpserver_arm64.dylib.dSYM next to the dylib so the
+			# crash logger can symbolicate without an extra dsymutil run
+			COMMAND ${CMAKE_COMMAND} -E env DSYMUTIL_REPRODUCER_PATH=off
+			        dsymutil $<TARGET_FILE:${SVDLL_LIBRARY}>
+			        -o $<TARGET_FILE:${SVDLL_LIBRARY}>.dSYM
+			VERBATIM)
+	endif()
 endif()
