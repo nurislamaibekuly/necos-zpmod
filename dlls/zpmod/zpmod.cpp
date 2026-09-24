@@ -1451,7 +1451,6 @@ void ZPShopOpen(edict_t* player)
 
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
-    if (g_round.state != RS_ACTIVE) return;
 
     // the map vote owns the menu channel while it is up
     if (g_mapVote.active || g_players[idx].menuType == ZPMENU_VOTE) return;
@@ -1501,7 +1500,6 @@ void ZPShopSelect(int playerIndex, int slot)
     if (!ZPIsPlayerConnected(player)) return;
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
-    if (g_round.state != RS_ACTIVE) return;
 
     bool isHuman = ZPIsHuman(player);
     int cost = 0;
