@@ -80,6 +80,13 @@ struct ZPRound {
 #define ZPMAPVOTE_INTERVAL 2400.0f
 #define ZPMAPVOTE_LENGTH 25.0f
 
+// client menu slots: both the map vote and the human ability menu share the
+// engine's single ShowMenu channel, so each player must remember which menu
+// is actually on their screen for menuselect to route correctly
+#define ZPMENU_NONE     0
+#define ZPMENU_VOTE     1
+#define ZPMENU_ABILITY  2
+
 struct ZPMapVote {
     bool active;
     bool hasVoted;
@@ -111,6 +118,7 @@ struct ZPPlayer {
     float adrenalineUntil;
     float frostCooldown;
     float abilityMenuUntil;
+    int menuType;         // which menu this player currently has up (ZPMENU_*)
     float frozenUntil;
     bool noclip;
     int steerMode;        // pick a round modifier (see ZPRoundEvent)

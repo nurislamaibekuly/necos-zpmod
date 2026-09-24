@@ -182,6 +182,8 @@ void ZPPlayerJoin(edict_t* player) {
 
     g_players[idx].ed = player;
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].menuType = ZPMENU_NONE;
+    g_players[idx].abilityMenuUntil = 0;
 
     char modelName[64] = "player"; // def player model btw
 
@@ -228,6 +230,8 @@ void ZPPlayerDisconnect(edict_t* player) {
     g_players[idx].ed = nullptr;
     g_players[idx].originalModel[0] = '\0';
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].menuType = ZPMENU_NONE;
+    g_players[idx].abilityMenuUntil = 0;
     player->v.health = 0;
     player->v.team = 0;
 
@@ -1243,7 +1247,10 @@ void ZPAbilityMenu(edict_t* player)
     int idx = ENTINDEX(player);
 
     // the map vote owns menuselect while it is running
-    if (g_mapVote.active) return;
+    if (g_mapVote.active || g_players[idx].menuType == ZPMENU_VOTE) return;
+
+    // replacing any lingering ability menu from an earlier +use
+    g_players[idx].abilityMenuUntil = 0;
 
     int bits = 0;
     if (g_players[idx].healCooldown <= gpGlobals->time) bits |= (1 << 0);
@@ -1272,12 +1279,14 @@ void ZPAbilityMenu(edict_t* player)
         WRITE_STRING("HUMAN ABILITIES\n\n1. Heal +50 HP\n2. Adrenaline (6s speed)\n3. Frost Nova (freeze)");
     MESSAGE_END();
 
+    g_players[idx].menuType = ZPMENU_ABILITY;
     g_players[idx].abilityMenuUntil = gpGlobals->time + 6.0f;
 }
 
 void ZPAbilitySelect(int playerIndex, int slot)
 {
     if (playerIndex < 1 || playerIndex > gpGlobals->maxClients) return;
+    if (g_players[playerIndex].menuType != ZPMENU_ABILITY) return;
     if (g_players[playerIndex].abilityMenuUntil < gpGlobals->time) return;
 
     edict_t* ed = INDEXENT(playerIndex);
@@ -1286,6 +1295,7 @@ void ZPAbilitySelect(int playerIndex, int slot)
     if (!pPlayer || !pPlayer->IsAlive()) return;
     if (g_round.state != RS_ACTIVE || !ZPIsHuman(ed)) return;
 
+    g_players[playerIndex].menuType = ZPMENU_NONE;
     g_players[playerIndex].abilityMenuUntil = 0;
 
     hudtextparms_t fb;
@@ -1550,6 +1560,11 @@ void ZPMapVoteOpen(void) {
         if (!ZPIsPlayerConnected(ed))
             continue;
 
+        // the vote takes over this player's menu channel and cancels any
+        // lingering ability menu so the two never interleave on-screen
+        g_players[i].menuType = ZPMENU_VOTE;
+        g_players[i].abilityMenuUntil = 0;
+
         MESSAGE_BEGIN(MSG_ONE, gmsgShowMenu, NULL, ed);
             WRITE_SHORT(bits);
             WRITE_CHAR((int)ZPMAPVOTE_LENGTH);
@@ -1597,6 +1612,10 @@ void ZPMapVoteThink(void) {
     g_mapVote.active = false;
     g_mapVote.hasVoted = true;
     g_mapVote.endTime = 0.0f;
+
+    for (int i = 1; i <= gpGlobals->maxClients; i++)
+        g_players[i].menuType = ZPMENU_NONE;
+
     CHANGE_LEVEL(map, NULL);
 }
 
@@ -1604,6 +1623,8 @@ void ZPMapVoteSelect(int playerIndex, int slot) {
     if (!g_mapVote.active)
         return;
     if (playerIndex < 1 || playerIndex > gpGlobals->maxClients)
+        return;
+    if (g_players[playerIndex].menuType != ZPMENU_VOTE)
         return;
     if (slot < 1 || slot > ZPMAPVOTE_OPTIONS)
         return;
@@ -1614,6 +1635,7 @@ void ZPMapVoteSelect(int playerIndex, int slot) {
 
     g_mapVote.playerVote[playerIndex] = slot - 1;
     g_mapVote.votes[slot - 1] += 1;
+    g_players[playerIndex].menuType = ZPMENU_NONE; // ballot cast, menu consumed
 }
 
 cvar_t zpmod_advertisementenabled = { "zpmod_advertisementenabled", "0", FCVAR_SERVER };

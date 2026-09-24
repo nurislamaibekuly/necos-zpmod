@@ -624,12 +624,17 @@ void ClientCommand( edict_t *pEntity )
 	else if( FStrEq( pcmd, "menuselect" ) )
 	{
 		int slot = atoi( CMD_ARGV( 1 ) );
+		int idx = ENTINDEX( pEntity );
 
-		// map vote menu takes priority while active
-		if (g_mapVote.active) {
-			ZPMapVoteSelect( ENTINDEX( pEntity ), slot );
-		} else {
-			ZPAbilitySelect( ENTINDEX( pEntity ), slot );
+		// route by the menu this player actually has up; only fall back to the
+		// global vote flag (fresh join mid-vote) when nothing is tracked
+		if( g_players[idx].menuType == ZPMENU_VOTE || ( g_mapVote.active && g_players[idx].menuType == ZPMENU_NONE ) )
+		{
+			ZPMapVoteSelect( idx, slot );
+		}
+		else if( g_players[idx].menuType == ZPMENU_ABILITY )
+		{
+			ZPAbilitySelect( idx, slot );
 		}
 	}
 	else if( FStrEq( pcmd, "follownext" ) )	// follow next player
