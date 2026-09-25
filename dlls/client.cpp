@@ -88,6 +88,12 @@ BOOL ClientConnect( edict_t *pEntity, const char *pszName, const char *pszAddres
 	if( !g_pGameRules->ClientConnected( pEntity, pszName, pszAddress, szRejectReason ))
 		return FALSE;
 
+	int idx = ENTINDEX(pEntity);
+	if (idx >= 1 && idx <= gpGlobals->maxClients) {
+		g_players[idx].welcomeMusicPending = true;
+		g_players[idx].welcomeMusicStarted = false;
+	}
+
 	return TRUE;
 
 // a client connecting during an intermission can cause problems
@@ -220,12 +226,6 @@ void ClientPutInServer( edict_t *pEntity )
 	pPlayer->pev->iuser1 = 0;
 	pPlayer->pev->iuser2 = 0;
 	ZPPlayerJoin(pEntity);
-
-	int idx = ENTINDEX(pEntity);
-	if (idx >= 1 && idx <= gpGlobals->maxClients && !g_players[idx].welcomeMusicStarted) {
-		g_players[idx].welcomeMusicStarted = true;
-		CLIENT_COMMAND(pEntity, "cd loop media/Half-Life17.mp3\n");
-	}
 }
 
 #include "voice_gamemgr.h"
@@ -616,6 +616,13 @@ void ClientCommand( edict_t *pEntity )
 	}
 	else if( FStrEq( pcmd, "specmode" ) ) // new spectator mode
 	{
+		int idx = ENTINDEX( pEntity );
+		if( idx >= 1 && idx <= gpGlobals->maxClients && g_players[idx].welcomeMusicStarted )
+		{
+			g_players[idx].welcomeMusicStarted = false;
+			CLIENT_COMMAND( pEntity, "cd stop\n" );
+		}
+
 		CBasePlayer *pPlayer = GetClassPtr( (CBasePlayer *)pev );
 
 		if( pPlayer->IsObserver() )
@@ -874,7 +881,17 @@ void StartFrame( void )
 	if( g_pGameRules )
 		g_pGameRules->Think();
 		// ZPHUD(); // we already got zproundthink honey
-		ZPRoundThink(&g_round);
+	ZPRoundThink(&g_round);
+
+	for (int i = 1; i <= gpGlobals->maxClients; i++) {
+		edict_t* ed = INDEXENT(i);
+		if (!ed || ed->free || !g_players[i].welcomeMusicPending)
+			continue;
+
+		g_players[i].welcomeMusicPending = false;
+		g_players[i].welcomeMusicStarted = true;
+		CLIENT_COMMAND(ed, "cd loop media/Half-Life17.mp3\n");
+	}
 
 	if( g_fGameOver )
 		return;

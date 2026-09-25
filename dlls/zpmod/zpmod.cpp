@@ -182,7 +182,6 @@ void ZPPlayerJoin(edict_t* player) {
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
-    g_players[idx].welcomeMusicStarted = false;
 
     char modelName[64] = "player"; // def player model btw
 
@@ -231,6 +230,7 @@ void ZPPlayerDisconnect(edict_t* player) {
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
+    g_players[idx].welcomeMusicPending = false;
     g_players[idx].welcomeMusicStarted = false;
     player->v.health = 0;
     player->v.team = 0;

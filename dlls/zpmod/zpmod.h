@@ -119,6 +119,7 @@ struct ZPPlayer {
     float frostCooldown;
     float abilityMenuUntil;
     int menuType;         // which menu this player currently has up (ZPMENU_*)
+    bool welcomeMusicPending;
     bool welcomeMusicStarted;
     float frozenUntil;
     bool noclip;
