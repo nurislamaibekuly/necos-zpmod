@@ -88,8 +88,6 @@ BOOL ClientConnect( edict_t *pEntity, const char *pszName, const char *pszAddres
 	if( !g_pGameRules->ClientConnected( pEntity, pszName, pszAddress, szRejectReason ))
 		return FALSE;
 
-	ZPPlayWelcomeMusic(pEntity);
-
 	return TRUE;
 
 // a client connecting during an intermission can cause problems
@@ -222,6 +220,12 @@ void ClientPutInServer( edict_t *pEntity )
 	pPlayer->pev->iuser1 = 0;
 	pPlayer->pev->iuser2 = 0;
 	ZPPlayerJoin(pEntity);
+
+	int idx = ENTINDEX(pEntity);
+	if (idx >= 1 && idx <= gpGlobals->maxClients && !g_players[idx].welcomeMusicStarted) {
+		g_players[idx].welcomeMusicStarted = true;
+		CLIENT_COMMAND(pEntity, "cd loop media/Half-Life17.mp3\n");
+	}
 }
 
 #include "voice_gamemgr.h"

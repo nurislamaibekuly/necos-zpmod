@@ -119,6 +119,7 @@ struct ZPPlayer {
     float frostCooldown;
     float abilityMenuUntil;
     int menuType;         // which menu this player currently has up (ZPMENU_*)
+    bool welcomeMusicStarted;
     float frozenUntil;
     bool noclip;
     int steerMode;        // pick a round modifier (see ZPRoundEvent)
@@ -191,7 +192,6 @@ void ZPAnnounceMvp(void);
 void ZPThunderStrike(edict_t* player);
 void ZPHurt(edict_t* player);
 void ZPPlayerJoin(edict_t* player);
-void ZPPlayWelcomeMusic(edict_t* player);
 void ZPPlayerDisconnect(edict_t* player);
 void ZPSetPlayerModel(edict_t* player, const char* modelName);
 void ZPRoundResetPlayer(edict_t* player);

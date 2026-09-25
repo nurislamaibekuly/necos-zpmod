@@ -182,6 +182,7 @@ void ZPPlayerJoin(edict_t* player) {
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
+    g_players[idx].welcomeMusicStarted = false;
 
     char modelName[64] = "player"; // def player model btw
 
@@ -230,6 +231,7 @@ void ZPPlayerDisconnect(edict_t* player) {
     g_players[idx].ZMClass = ZM_CLASS_REGULAR;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
+    g_players[idx].welcomeMusicStarted = false;
     player->v.health = 0;
     player->v.team = 0;
 
@@ -1132,14 +1134,6 @@ void ZPSetPlayerModel(edict_t* player, const char* modelName)
     }
 
     SET_MODEL(player, modelPath);
-}
-
-void ZPPlayWelcomeMusic(edict_t* player) {
-    if (!player) return;
-    int idx = ENTINDEX(player);
-    if (idx < 1 || idx > gpGlobals->maxClients) return;
-
-    CLIENT_COMMAND(player, "cd play media/Half-Life17.mp3\n");
 }
 
 void ZPSendInfection(edict_t* victim, int infectorIndex) {
