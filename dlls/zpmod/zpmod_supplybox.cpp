@@ -12,7 +12,7 @@
 #include <math.h>
 
 #define ZP_SUPPLYBOX_MODEL          "models/zpmod/supplybox.mdl"
-#define ZP_SUPPLYBOX_ICON           "sprites/icon_supplybox.spr"
+#define ZP_SUPPLYBOX_ICON           "sprites/zpmod/icon_supplybox.spr"
 #define ZP_SUPPLYBOX_SND_DROP       "zpmod/supplybox_drop.wav"
 #define ZP_SUPPLYBOX_SND_PICKUP     "zpmod/supplybox_pickup.wav"
 
