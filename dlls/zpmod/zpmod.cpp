@@ -155,14 +155,6 @@ void ZPRoundResetPlayer(edict_t* ed) {
             resetModel = "helmet";
         ZPSetPlayerModel(ed, resetModel);
     }
-
-    pPlayer->GiveNamedItem("weapon_molotov");
-    pPlayer->GiveNamedItem("weapon_freezebomb");
-
-    ZP_Trace("ZPRoundResetPlayer gave molotov+freezebomb to slot %d (team=%d weapons=0x%X)\n",
-             ENTINDEX(ed), ed->v.team, (unsigned int)ed->v.weapons);
-    ALERT(at_console, "ZPDEBUG: gave molotov+freezebomb to slot %d (team=%d weapons=0x%X)\n",
-          ENTINDEX(ed), ed->v.team, (unsigned int)ed->v.weapons);
 }
 
 static bool joinInProgress = false;
@@ -439,7 +431,7 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
         EMIT_SOUND(player, CHAN_AUTO, "ambience/the_horror3.wav", 1.0, ATTN_NONE);
     } else if (forceBoss && !wasInfectedBySomeone) {
         g_players[idx].ZMClass = ZM_CLASS_BOSS;
-        EMIT_SOUND(player, CHAN_AUTO, "ambience/the_horror3.wav", 1.0, ATTN_NONE);
+        EMIT_SOUND(player, CHAN_AUTO, "zpmod/round_start_boss.wav", 1.0, ATTN_NONE);
     } else {
         r = RANDOM_LONG(1, 4);
         if (r == 1) g_players[idx].ZMClass = ZM_CLASS_FAST;
@@ -1757,7 +1749,7 @@ void ZPRoundThink(ZPRound* round) {
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
                 if (ZPIsPlayerConnected(ed) && ed->v.health > 0) {
-                    EMIT_SOUND(ed, CHAN_AUTO, "zpmod/start.wav", 1.0, ATTN_NORM);
+                    EMIT_SOUND(ed, CHAN_AUTO, "zpmod/round_start.wav", 1.0, ATTN_NORM);
                 }
             }
         }
@@ -2043,7 +2035,6 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/wall_1.wav");
     PRECACHE_SOUND("zpmod/wall_2.wav");
     PRECACHE_SOUND("zpmod/wall_3.wav");
-    PRECACHE_SOUND("zpmod/start.wav");
     PRECACHE_SOUND("zpmod/round_start.wav");
     PRECACHE_SOUND("zpmod/round_start_boss.wav");
     PRECACHE_SOUND("zpmod/human_death_1.wav");
