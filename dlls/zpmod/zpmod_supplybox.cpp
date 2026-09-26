@@ -175,17 +175,44 @@ void CZPSupplyBoxMarker::ShowAt( const Vector &pos )
 	UTIL_SetOrigin( pev, pos );
 }
 
-static CZPSupplyBoxMarker *s_pMarker[33] = { NULL };
+// We deliberately cache the edict_t (stable address) and re-derive the class
+// instance from it each time, rather than caching the CBaseEntity pointer:
+// marker entities are freed on level change, so a cached class pointer would
+// dangle across maps. The edict slot is validated as still being a live
+// zp_supplybox_marker before the instance is used.
+static edict_t *s_pMarkerEdict[33] = { NULL };
+
+static CZPSupplyBoxMarker *ZPSupplyBoxGetMarkerInstance( int slot )
+{
+	edict_t *ed = s_pMarkerEdict[slot];
+	if( !FNullEnt( ed ) && !ed->free && FClassnameIs( ed, "zp_supplybox_marker" ) )
+	{
+		CZPSupplyBoxMarker *inst = (CZPSupplyBoxMarker *)CBaseEntity::Instance( ed );
+		if( inst && inst->pev && inst->edict() == ed )
+			return inst;
+	}
+	return NULL;
+}
 
 static CZPSupplyBoxMarker *ZPSupplyBoxGetMarker( int slot )
 {
-	if( s_pMarker[slot] && s_pMarker[slot]->edict() && !s_pMarker[slot]->edict()->free && !FNullEnt( s_pMarker[slot]->edict() ) )
-		return s_pMarker[slot];
+	CZPSupplyBoxMarker *inst = ZPSupplyBoxGetMarkerInstance( slot );
+	if( inst )
+		return inst;
 
-	CZPSupplyBoxMarker *pMarker = GetClassPtr( (CZPSupplyBoxMarker *)NULL );
-	pMarker->Spawn();
-	s_pMarker[slot] = pMarker;
-	return pMarker;
+	edict_t *pEdict = CREATE_NAMED_ENTITY( MAKE_STRING( "zp_supplybox_marker" ) );
+	if( !pEdict || FNullEnt( pEdict ) )
+		return NULL;
+	DispatchSpawn( pEdict );
+	s_pMarkerEdict[slot] = pEdict;
+	return (CZPSupplyBoxMarker *)CBaseEntity::Instance( pEdict );
+}
+
+static void ZPSupplyBoxHideMarker( int slot )
+{
+	CZPSupplyBoxMarker *inst = ZPSupplyBoxGetMarkerInstance( slot );
+	if( inst )
+		inst->Hide();
 }
 
 static bool ZPSupplyBoxProjectMarker( CBasePlayer *pPlayer, const Vector &boxOrigin, Vector &out )
@@ -227,14 +254,14 @@ void ZPSupplyBoxIconUpdate( void )
 		edict_t *ed = INDEXENT( slot );
 		if( !ed || ed->free || FNullEnt( ed ) || !ZPIsPlayerConnected( ed ) || ZPIsDead( ed ) || ZPIsZombie( ed ) )
 		{
-			if( s_pMarker[slot] ) s_pMarker[slot]->Hide();
+			ZPSupplyBoxHideMarker( slot );
 			continue;
 		}
 
 		CBasePlayer *pPlayer = (CBasePlayer *)GET_PRIVATE( ed );
 		if( !pPlayer || !pPlayer->IsAlive() )
 		{
-			if( s_pMarker[slot] ) s_pMarker[slot]->Hide();
+			ZPSupplyBoxHideMarker( slot );
 			continue;
 		}
 
@@ -268,8 +295,8 @@ void ZPSupplyBoxIconUpdate( void )
 
 		if( found )
 			ZPSupplyBoxGetMarker( slot )->ShowAt( bestPos );
-		else if( s_pMarker[slot] )
-			s_pMarker[slot]->Hide();
+		else
+			ZPSupplyBoxHideMarker( slot );
 	}
 }
 
@@ -670,10 +697,16 @@ static bool ZPSupplyBoxPickOrigin( Vector &origin )
 
 static CZPSupplyBox *ZPSupplyBoxSpawnAt( const Vector &origin, int iReward, bool bIgnoreRoundState )
 {
-	CZPSupplyBox *pBox = GetClassPtr( (CZPSupplyBox *)NULL );
+	edict_t *pEdict = CREATE_NAMED_ENTITY( MAKE_STRING( "zp_supplybox" ) );
+	if( !pEdict || FNullEnt( pEdict ) )
+		return NULL;
+	CZPSupplyBox *pBox = (CZPSupplyBox *)CBaseEntity::Instance( pEdict );
+	if( !pBox || !pBox->pev )
+		return NULL;
+
 	pBox->m_iReward = iReward;
 	pBox->m_bIgnoreRoundState = bIgnoreRoundState;
-	pBox->Spawn();
+	DispatchSpawn( pEdict );
 	pBox->m_bIgnoreRoundState = bIgnoreRoundState;
 	UTIL_SetOrigin( pBox->pev, origin );
 	pBox->pev->velocity = Vector( RANDOM_FLOAT( -40.0f, 40.0f ), RANDOM_FLOAT( -40.0f, 40.0f ), 0.0f );
