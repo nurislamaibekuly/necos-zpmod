@@ -1057,6 +1057,7 @@ void ZPCleanupWorld(void) {
 
         if (!strncmp(cls, "weaponbox", 9) ||
             !strncmp(cls, "zp_grenade", 10) ||
+            !strncmp(cls, "zp_supplybox", 13) ||
             !strncmp(cls, "grenade", 7))
             UTIL_Remove(CBaseEntity::Instance(ed));
     }
@@ -1687,6 +1688,9 @@ void ZPRoundThink(ZPRound* round) {
 
     ZPFeatureRoundThink(round);
 
+    // Unconditional so wall markers also track test boxes from zp_supplybox.
+    ZPSupplyBoxIconUpdate();
+
     if (connectedCount < 2) {
         if (round->state != RS_PREP || round->countdownStarted) {
             round->state = RS_PREP;
@@ -1694,6 +1698,7 @@ void ZPRoundThink(ZPRound* round) {
             round->lastAnnounce = -1;
             lastSpokeSecond = -1;
             ZPRoundStopAmbient();
+            ZPSupplyBoxRoundReset();
 
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
@@ -1796,6 +1801,7 @@ void ZPRoundThink(ZPRound* round) {
             ZPFreezePlayers(false);
             ZPRoundStartAmbient();
             ZPCleanupWorld();
+            ZPSupplyBoxRoundStart();
 
             UTIL_ClientPrintAll(HUD_PRINTCENTER, "INFECTION!\n");
 
@@ -1839,6 +1845,8 @@ void ZPRoundThink(ZPRound* round) {
 
     // if round active
     else if (round->state == RS_ACTIVE) {
+        ZPSupplyBoxThink();
+
         int humans = 0, zombies = 0;
         ZPCountTeams(humans, zombies);
 
@@ -1985,6 +1993,7 @@ void ZPRoundThink(ZPRound* round) {
             lastSpokeSecond = -1;
             ZPRoundStopAmbient();
             ZPCleanupWorld();
+            ZPSupplyBoxRoundReset();
 
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
@@ -2009,6 +2018,7 @@ void ZPModInit(void) {
     ZPFeatureInit();
     ZPStatsInit();
     ZPModGrenadeInit();
+    ZPSupplyBoxInit();
     ZPMapVoteReset();
     ZPAdminInit();
     s_adIndex = 0;
@@ -2078,4 +2088,6 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_GENERIC("models/player/helmet/helmet.mdl");
     PRECACHE_MODEL("sprites/laserbeam.spr");
     PRECACHE_MODEL("sprites/lgtning.spr");
+
+    ZPSupplyBoxPrecache();
 }

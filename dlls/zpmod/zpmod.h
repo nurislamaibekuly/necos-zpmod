@@ -145,6 +145,16 @@ extern ZPMapVote g_mapVote;
 
 void ZPModInit(void);
 void ZPModGrenadeInit(void);
+void ZPMolotovBlast(const Vector& origin);
+void ZPFrostBlast(const Vector& origin);
+void ZPSupplyBoxInit(void);
+void ZPSupplyBoxPrecache(void);
+void ZPSupplyBoxRoundStart(void);
+void ZPSupplyBoxRoundReset(void);
+void ZPSupplyBoxThink(void);
+void ZPSupplyBoxIconUpdate(void);
+void ZPSupplyBoxCommand(void);
+void ZPSupplyBoxClearCommand(void);
 void ZPCleanupWorld(void);
 void ZPRoundThink(ZPRound* round);
 void ZPFeatureInit(void);

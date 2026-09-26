@@ -150,6 +150,7 @@ set (SVDLL_SOURCES
 	zpmod/zpmod_features.cpp
 	zpmod/zpmod_grenades.cpp
 	zpmod/zpmod_stats.cpp
+	zpmod/zpmod_supplybox.cpp
 	../game_shared/voice_gamemgr.cpp
 	../pm_shared/pm_debug.c
 	../pm_shared/pm_math.c

@@ -639,6 +639,24 @@ void CZPGrenade::ExplodeInfection( void )
 	UTIL_Remove( this );
 }
 
+void ZPMolotovBlast( const Vector &origin )
+{
+	CZPGrenade *pGrenade = CZPGrenade::Shoot( VARS( INDEXENT( 0 ) ), CZPGrenade::MOLOTOV, origin, Vector( 0, 0, 0 ) );
+	if( !pGrenade )
+		return;
+
+	pGrenade->m_flPrime = gpGlobals->time;
+}
+
+void ZPFrostBlast( const Vector &origin )
+{
+	CZPGrenade *pGrenade = CZPGrenade::Shoot( VARS( INDEXENT( 0 ) ), CZPGrenade::FREEZE, origin, Vector( 0, 0, 0 ) );
+	if( !pGrenade )
+		return;
+
+	pGrenade->m_flPrime = gpGlobals->time;
+}
+
 //---------------------------------------------------------------
 // base throw weapon
 //---------------------------------------------------------------
