@@ -20,6 +20,9 @@
 //
 // The view/player/world models are 4-sequence GoldSrc grenade rigs:
 //   idle=0, pullpin=1, throw=2, deploy=3
+// WeaponIdle() must land on slot 0: it is the hold clip the client loops on
+// its own for as long as the weapon stays out. Sending deploy=3 there instead
+// re-ran the draw animation every 10-15 seconds and slot 0 never played.
 
 #define ZP_MOLOTOV_DEFAULT_GIVE		1
 #define ZP_FREEZEBOMB_DEFAULT_GIVE	1
@@ -690,9 +693,15 @@ public:
 	virtual const char *PullSound( void ) const { return NULL; }
 	virtual const char *ThrowSound( void ) const { return NULL; }
 
+	// Fires the next line of the weapon's idle voice pool. Only the infection
+	// bomb overrides this; the base class is silent on idle, which is what
+	// molotov/freezebomb want.
+	virtual void PlayIdleSound( void ) { }
+
 protected:
 	float m_flStartThrow;
 	float m_flReleaseThrow;
+	float m_flNextIdleSound;
 	bool m_bRetirePending;
 };
 
@@ -811,6 +820,22 @@ void CZPThrowGrenade::ItemPostFrame( void )
 		return; // don't fall through to the normal attack/idle dispatch while cooking
 	}
 
+	// Idle voice. The viewmodel holds its idle clip on its own once the clip is
+	// playing, so all the server owes it is the next line every couple of
+	// seconds. m_flNextIdleSound is stamped in WeaponIdle() right after the
+	// clip starts, and ItemPostFrame() only runs while this weapon is the
+	// active one - so holstering, cooking and retiring all silence it for free.
+	//
+	// gpGlobals->time, not UTIL_WeaponTimeBase(): with CLIENT_WEAPONS that
+	// returns a hard 0.0f on the server and the weapon's own m_flTimeWeaponIdle
+	// is a *countdown* decremented in CBasePlayer::PostThink. A wall-clock
+	// stamp is the only thing that survives a server frame loop here.
+	if( m_pPlayer->pev->weaponanim == IdleAnim() && gpGlobals->time >= m_flNextIdleSound )
+	{
+		PlayIdleSound();
+		m_flNextIdleSound = gpGlobals->time + UTIL_SharedRandomFloat( m_pPlayer->random_seed, 1.2f, 2.4f );
+	}
+
 	CBasePlayerWeapon::ItemPostFrame();
 }
 
@@ -870,7 +895,20 @@ void CZPThrowGrenade::WeaponIdle( void )
 
 	if( m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] )
 	{
-		SendWeaponAnim( DeployAnim() );
+		// IdleAnim() (slot 0) is the hold clip. It is flagged as looping, so
+		// once the client is on it the model keeps playing on its own and we
+		// must NOT re-send it: that would snap the loop back to frame 0 every
+		// 10-15 seconds. Only re-send when the viewmodel is still parked on one
+		// of the action clips (deploy / pullpin / throw).
+		if( m_pPlayer->pev->weaponanim != IdleAnim() )
+		{
+			SendWeaponAnim( IdleAnim() );
+			m_flNextIdleSound = gpGlobals->time + 0.35f;
+			ZP_Trace("ZPBOMB idle anim %d (was %d) t=%.2f vm=%s\n",
+				IdleAnim(), m_pPlayer->pev->weaponanim, gpGlobals->time,
+				m_pPlayer->pev->viewmodel ? STRING(m_pPlayer->pev->viewmodel) : "NULL");
+		}
+
 		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + UTIL_SharedRandomFloat( m_pPlayer->random_seed, 10.0f, 15.0f );
 	}
 	else
@@ -1043,6 +1081,24 @@ enum infectionbomb_anim_e
 	INFECTIONBOMB_DEPLOY
 };
 
+// Idle voice pool. v_hegrenade.mdl does carry sound events (code 5004) on its
+// idle clip, at frames 1/50/75/115, but they name
+// "sound/weapons/Zombi_Bomb_Idle_1..4.wav" - a folder/case that does not exist
+// here, so the client drops them (see the FS_LoadSound warnings in engine.log)
+// and 4 of the 8 recorded lines go unused. Those events are neutralised in the
+// model, and the pool below drives all 8 from the server instead.
+static const char *const g_szInfectionBombIdleSounds[] =
+{
+	"zpmod/zombi_bomb_idle_1.wav",
+	"zpmod/zombi_bomb_idle_2.wav",
+	"zpmod/zombi_bomb_idle_3.wav",
+	"zpmod/zombi_bomb_idle_4.wav",
+	"zpmod/zombi_bomb_idle_5.wav",
+	"zpmod/zombi_bomb_idle_6.wav",
+	"zpmod/zombi_bomb_idle_7.wav",
+	"zpmod/zombi_bomb_idle_8.wav"
+};
+
 class CWeaponInfectionBomb : public CZPThrowGrenade
 {
 public:
@@ -1063,6 +1119,10 @@ public:
 	const char *DeploySound( void ) const { return "zpmod/zombi_bomb_deploy.wav"; }
 	const char *PullSound( void ) const { return "zpmod/zombi_bomb_pull_1.wav"; }
 	const char *ThrowSound( void ) const { return "zpmod/zombi_bomb_throw.wav"; }
+	void PlayIdleSound( void );
+
+private:
+	int m_iIdleSound;
 };
 
 LINK_ENTITY_TO_CLASS( weapon_infectionbomb, CWeaponInfectionBomb )
@@ -1089,6 +1149,21 @@ void CWeaponInfectionBomb::Precache( void )
 	PRECACHE_SOUND( "zpmod/zombi_bomb_exp.wav" );
 	PRECACHE_SOUND( "zpmod/zombi_bomb_bounce_1.wav" );
 	PRECACHE_SOUND( "zpmod/zombi_bomb_bounce_2.wav" );
+	PRECACHE_SOUND_ARRAY( g_szInfectionBombIdleSounds );
+}
+
+void CWeaponInfectionBomb::PlayIdleSound( void )
+{
+	const int count = (int)ARRAYSIZE( g_szInfectionBombIdleSounds );
+	if( m_iIdleSound < 0 || m_iIdleSound >= count )
+		m_iIdleSound = 0;
+
+	EMIT_SOUND( ENT( m_pPlayer->pev ), CHAN_WEAPON, g_szInfectionBombIdleSounds[m_iIdleSound], 1.0f, ATTN_NORM );
+	ZP_Trace("ZPBOMB idle sound %d t=%.2f anim=%d\n", m_iIdleSound, gpGlobals->time, m_pPlayer->pev->weaponanim);
+
+	// Walk the pool instead of picking uniformly, and step by 1 or 2 so two
+	// consecutive lines are never the same recording.
+	m_iIdleSound = ( m_iIdleSound + 1 + RANDOM_LONG( 0, 1 ) ) % count;
 }
 
 int CWeaponInfectionBomb::GetItemInfo( ItemInfo *p )
