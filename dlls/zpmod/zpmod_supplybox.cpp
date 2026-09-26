@@ -310,9 +310,16 @@ static void ZPSupplyBoxEnsureIconTicker( void )
 	if( s_pTicker && s_pTicker->edict() && !s_pTicker->edict()->free && !FNullEnt( s_pTicker->edict() ) )
 		return;
 
-	CZPSupplyBoxIconTicker *pTicker = GetClassPtr( (CZPSupplyBoxIconTicker *)NULL );
-	pTicker->Spawn();
-	s_pTicker = pTicker;
+	edict_t *pTickerEdict = CREATE_NAMED_ENTITY( MAKE_STRING( "zp_supplybox_iconticker" ) );
+	if( pTickerEdict && !FNullEnt( pTickerEdict ) )
+	{
+		CBaseEntity *pTicker = CBaseEntity::Instance( pTickerEdict );
+		if( pTicker && pTicker->pev )
+		{
+			DispatchSpawn( pTickerEdict );
+			s_pTicker = pTicker;
+		}
+	}
 }
 
 class CZPSupplyBox : public CBaseEntity
