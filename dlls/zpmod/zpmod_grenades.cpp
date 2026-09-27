@@ -43,7 +43,7 @@
 #define ZP_FREEZE_RADIUS			300.0f
 #define ZP_FREEZE_TIME				10.0f
 
-#define ZP_INFECTION_RADIUS			160.0f
+#define ZP_INFECTION_RADIUS			240.0f
 
 // The molotov is a weapon too, so its damage follows the same zp_weapon_damage
 // scaling as the stock arsenal instead of being a fixed value.
@@ -622,12 +622,7 @@ void CZPGrenade::ExplodeInfection( void )
 
 	ZP_Trace("ZPGREN INFECTION explode at (%.0f %.0f %.0f)\n", origin.x, origin.y, origin.z);
 
-	// Nerfed: one bomb converts at most one human - the closest one in range.
-	// It used to convert every human inside ZP_INFECTION_RADIUS, which turned a
-	// single throw into a round win.
 	int humansLeft = ZPCountAliveHumans();
-	edict_t *target = NULL;
-	float flBestDist = ZP_INFECTION_RADIUS + 1.0f;
 
 	for( int i = 1; i <= gpGlobals->maxClients; i++ )
 	{
@@ -645,24 +640,15 @@ void CZPGrenade::ExplodeInfection( void )
 
 		ZP_Trace("ZPGREN INFECTION target slot=%d dist=%.0f humansLeft=%d\n", i, dist, humansLeft);
 
-		if( dist < flBestDist )
-		{
-			flBestDist = dist;
-			target = ed;
-		}
-	}
-
-	if( target )
-	{
 		if( humansLeft > 1 )
-			ZPInfectPlayer( target, true );
-		else
 		{
-			// last human alive is killed instead of infected, ZP5.0 style
-			CBasePlayer *p = (CBasePlayer *)GET_PRIVATE( target );
-			if( p )
-				p->TakeDamage( attacker, attacker, 10000.0f, DMG_GENERIC );
+			ZPInfectPlayer( ed, true );
+			humansLeft--;
+			continue;
 		}
+
+		// last human alive is killed instead of infected, ZP5.0 style
+		p->TakeDamage( attacker, attacker, 10000.0f, DMG_GENERIC );
 	}
 
 	UTIL_Remove( this );
