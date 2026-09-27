@@ -516,8 +516,7 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "restart")) {
-        g_round.state = RS_ROUND_DRAW;
-        g_round.resetTime = gpGlobals->time;
+        ZPRoundRestart();
         ZPAdminMsg(sender, "^4[Admin] Round restarting...^7");
         return true;
     }

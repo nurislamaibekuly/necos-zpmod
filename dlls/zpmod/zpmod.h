@@ -157,6 +157,7 @@ void ZPSupplyBoxCommand(void);
 void ZPSupplyBoxClearCommand(void);
 void ZPCleanupWorld(void);
 void ZPRoundThink(ZPRound* round);
+void ZPRoundRestart(void);
 void ZPFeatureInit(void);
 void ZPFeaturePreRound(ZPRound* round);
 const char* ZPModeName(int mode);

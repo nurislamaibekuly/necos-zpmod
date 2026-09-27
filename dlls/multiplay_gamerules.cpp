@@ -124,6 +124,10 @@ BOOL CHalfLifeMultiplay::ClientCommand( CBasePlayer *pPlayer, const char *pcmd )
 	return CGameRules::ClientCommand( pPlayer, pcmd );
 }
 
+// Global damage multiplier applied to every player weapon below, so the whole
+// arsenal can be retuned from the console (or server.cfg) without a rebuild.
+cvar_t zp_weapon_damage = { "zp_weapon_damage", "1.5", FCVAR_SERVER };
+
 //=========================================================
 //=========================================================
 void CHalfLifeMultiplay::RefreshSkillData( void )
@@ -133,48 +137,60 @@ void CHalfLifeMultiplay::RefreshSkillData( void )
 
 	// override some values for multiplay.
 
+	// Every player weapon below is the stock deathmatch value scaled by
+	// zp_weapon_damage, which defaults to 1.5 (zombies have far more health
+	// than the 100hp humans, so vanilla damage barely scratches them).
+	float flDmgScale = zp_weapon_damage.value;
+	if( flDmgScale < 0.0f )
+		flDmgScale = 0.0f;
+
 	// suitcharger
 	gSkillData.suitchargerCapacity = 30;
 
 	// Crowbar whack
-	gSkillData.plrDmgCrowbar = 25;
+	gSkillData.plrDmgCrowbar = 25.0f * flDmgScale;
 
 	// Glock Round
-	gSkillData.plrDmg9MM = 12;
+	gSkillData.plrDmg9MM = 12.0f * flDmgScale;
 
 	// 357 Round
-	gSkillData.plrDmg357 = 50;
+	gSkillData.plrDmg357 = 50.0f * flDmgScale;
 
 	// MP5 Round
-	gSkillData.plrDmgMP5 = 12;
+	gSkillData.plrDmgMP5 = 12.0f * flDmgScale;
 
 	// M203 grenade
-	gSkillData.plrDmgM203Grenade = 100;
+	gSkillData.plrDmgM203Grenade = 100.0f * flDmgScale;
 
 	// Shotgun buckshot
-	gSkillData.plrDmgBuckshot = 20;// fewer pellets in deathmatch
+	gSkillData.plrDmgBuckshot = 20.0f * flDmgScale;// fewer pellets in deathmatch
 
 	// Crossbow
-	gSkillData.plrDmgCrossbowClient = 20;
+	gSkillData.plrDmgCrossbowClient = 20.0f * flDmgScale;
+	gSkillData.plrDmgCrossbowMonster = 20.0f * flDmgScale;
 
 	// RPG
-	gSkillData.plrDmgRPG = 120;
+	gSkillData.plrDmgRPG = 120.0f * flDmgScale;
+
+	// Gauss gun. The multiplayer ruleset never set this, so primary fire fell
+	// back on the sk_plr_gauss cvars (which default to 0) and did nothing.
+	gSkillData.plrDmgGauss = 20.0f * flDmgScale;
 
 	// Egon
-	gSkillData.plrDmgEgonWide = 20;
-	gSkillData.plrDmgEgonNarrow = 10;
+	gSkillData.plrDmgEgonWide = 20.0f * flDmgScale;
+	gSkillData.plrDmgEgonNarrow = 10.0f * flDmgScale;
 
 	// Hand Grendade
-	gSkillData.plrDmgHandGrenade = 100;
+	gSkillData.plrDmgHandGrenade = 100.0f * flDmgScale;
 
 	// Satchel Charge
-	gSkillData.plrDmgSatchel = 120;
+	gSkillData.plrDmgSatchel = 120.0f * flDmgScale;
 
 	// Tripmine
-	gSkillData.plrDmgTripmine = 150;
+	gSkillData.plrDmgTripmine = 150.0f * flDmgScale;
 
 	// hornet
-	gSkillData.plrDmgHornet = 10;
+	gSkillData.plrDmgHornet = 10.0f * flDmgScale;
 }
 
 // longest the intermission can last, in seconds

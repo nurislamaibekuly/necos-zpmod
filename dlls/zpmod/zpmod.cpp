@@ -424,9 +424,12 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     bool forceBoss = g_players[idx].bossRoundStart;
     g_players[idx].bossRoundStart = false;
 
-    int r = RANDOM_LONG(1, 12);
-    
-    if (r == 6 && wasInfectedBySomeone == false) {
+    // Bosses are meant to be an event, not a lottery: 2% per natural infection
+    // (was 1 in 12, which handed out a boss to most first-zombie rolls and to
+    // roughly one in twelve plague spreads).
+    int r = RANDOM_LONG(1, 50);
+
+    if (r == 1 && wasInfectedBySomeone == false) {
         g_players[idx].ZMClass = ZM_CLASS_BOSS;
         EMIT_SOUND(player, CHAN_AUTO, "ambience/the_horror3.wav", 1.0, ATTN_NONE);
     } else if (forceBoss && !wasInfectedBySomeone) {
@@ -745,14 +748,15 @@ void ZPZombieSwing(edict_t* player)
         // ReZombie-style claw: deals melee damage per hit (class-dependent).
         // Armor absorbs part of it; a killing blow from a zombie converts the
         // victim (handled in ZPDied).
-        float dmg = 50.0f * ZPFeatureClawMultiplier();
+        float dmg = 0.0f;
         switch (g_players[idx].ZMClass) {
-            case ZM_CLASS_FAST:   dmg = 42.0f * ZPFeatureClawMultiplier(); break;
-            case ZM_CLASS_TANK:   dmg = 65.0f * ZPFeatureClawMultiplier(); break;
-            case ZM_CLASS_JUMPER: dmg = 40.0f * ZPFeatureClawMultiplier(); break;
-            case ZM_CLASS_BOSS:   dmg = 72.0f * ZPFeatureClawMultiplier(); break;
-            default:              dmg = 50.0f * ZPFeatureClawMultiplier(); break;
+            case ZM_CLASS_FAST:   dmg = 58.0f; break;
+            case ZM_CLASS_TANK:   dmg = 88.0f; break;
+            case ZM_CLASS_JUMPER: dmg = 55.0f; break;
+            case ZM_CLASS_BOSS:   dmg = 105.0f; break;
+            default:              dmg = 70.0f; break;
         }
+        dmg *= ZPFeatureClawMultiplier();
         pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_SLASH);
 
         // splash blood at the wound so a connecting hit reads as a hit
@@ -783,9 +787,9 @@ void ZPZombieSwing(edict_t* player)
     else {
         // clean miss: still give the swing a woosh
         int r = RANDOM_LONG(1, 3);
-        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_1.wav", 1.0, ATTN_NORM);
-        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_2.wav", 1.0, ATTN_NORM);
-        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_3.wav", 1.0, ATTN_NORM);
+        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/swing_1.wav", 1.0, ATTN_NORM);
+        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/swing_2.wav", 1.0, ATTN_NORM);
+        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/swing_3.wav", 1.0, ATTN_NORM);
     }
 }
 
@@ -1018,7 +1022,7 @@ void ZPRoundInit(ZPRound* round) {
     round->resetTime = 0.0f;
     round->nextStateTime = 0.0f;
     round->roundStartTime = 0.0f;
-    round->roundDuration = 480.0f;
+    round->roundDuration = 180.0f;
     round->lastAnnounce = -1;
     lastSpokeSecond = -1;
     round->countdownStarted = false;
@@ -2000,6 +2004,9 @@ void ZPRoundThink(ZPRound* round) {
 void ZPRoundRestart() {
     g_round.state = RS_ROUND_DRAW;
     g_round.resetTime = gpGlobals->time;
+
+    // re-roll the mode / boss round / event for the next one right away
+    ZPFeaturePreRound(&g_round);
 }
 
 // fuck these retards that keeps sending me shit on discord
@@ -2032,6 +2039,9 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/attack_1.wav");
     PRECACHE_SOUND("zpmod/attack_2.wav");
     PRECACHE_SOUND("zpmod/attack_3.wav");
+    PRECACHE_SOUND("zpmod/swing_1.wav");
+    PRECACHE_SOUND("zpmod/swing_2.wav");
+    PRECACHE_SOUND("zpmod/swing_3.wav");
     PRECACHE_SOUND("zpmod/wall_1.wav");
     PRECACHE_SOUND("zpmod/wall_2.wav");
     PRECACHE_SOUND("zpmod/wall_3.wav");

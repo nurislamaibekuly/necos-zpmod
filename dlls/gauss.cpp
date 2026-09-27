@@ -323,13 +323,17 @@ void CGauss::StartFire( void )
 	Vector vecAiming = gpGlobals->v_forward;
 	Vector vecSrc = m_pPlayer->GetGunPosition(); // + gpGlobals->v_up * -8 + gpGlobals->v_right * 8;
 
+	// A fully charged shot is 10x the primary's damage, so it follows the same
+	// zp_weapon_damage scaling.
+	float flFullChargeDamage = gSkillData.plrDmgGauss * 10.0f;
+
 	if( gpGlobals->time - m_pPlayer->m_flStartCharge > GetFullChargeTime() )
 	{
-		flDamage = 200.0f;
+		flDamage = flFullChargeDamage;
 	}
 	else
 	{
-		flDamage = 200.0f * ( ( gpGlobals->time - m_pPlayer->m_flStartCharge ) / GetFullChargeTime() );
+		flDamage = flFullChargeDamage * ( ( gpGlobals->time - m_pPlayer->m_flStartCharge ) / GetFullChargeTime() );
 	}
 
 	if( m_fPrimaryFire )

@@ -80,8 +80,8 @@ void ZPFeaturePreRound(ZPRound* round) {
     }
     round->mode = mode;
 
-    // rare boss round (~12%); the nemesis mode is a boss round by design
-    round->bossRound = (RANDOM_LONG(1, 100) <= 12);
+    // very rare boss round (~3%); the nemesis mode is a boss round by design
+    round->bossRound = (RANDOM_LONG(1, 100) <= 3);
 
     // rare random event modifier (~20%)
     int ev = ZEV_NONE;
@@ -267,7 +267,9 @@ s_blackoutAt = 0.0f;
         if (hcount > 1) {
             int victim = humans[RANDOM_LONG(0, hcount - 1)];
             UTIL_ClientPrintAll(HUD_PRINTCENTER, "The plague spreads...\n");
-            ZPInfectPlayer(INDEXENT(victim), false);
+            // flagged as spread-by-something: a mid-round victim must never roll
+            // the random boss, only the round's own first infections can
+            ZPInfectPlayer(INDEXENT(victim), true);
         }
     }
 
@@ -306,7 +308,9 @@ int ZPFeatureInitialArmor(void) {
 }
 
 float ZPFeatureRoundDuration(void) {
-    return g_round.suddenDeathActive ? 240.0f : 480.0f;
+    // 3 minute rounds; the SUDDEN_DEATH event still halves whatever the round
+    // duration is, so that mode drops to 1:30.
+    return g_round.suddenDeathActive ? 90.0f : 180.0f;
 }
 
 // ---- stat hooks (used by the rest of the ZP module) ----

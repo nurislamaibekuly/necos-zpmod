@@ -43,7 +43,19 @@
 #define ZP_FREEZE_RADIUS			300.0f
 #define ZP_FREEZE_TIME				10.0f
 
-#define ZP_INFECTION_RADIUS			240.0f
+#define ZP_INFECTION_RADIUS			160.0f
+
+// The molotov is a weapon too, so its damage follows the same zp_weapon_damage
+// scaling as the stock arsenal instead of being a fixed value.
+extern cvar_t zp_weapon_damage;
+
+static float ZPWeaponDamageScale( void )
+{
+	float flScale = zp_weapon_damage.value;
+	if( flScale < 0.0f )
+		flScale = 0.0f;
+	return flScale;
+}
 
 // safety net for the hold-to-throw state machine: if the attack button's
 // release is never seen (lag, alt-tab, weapon switch, menu), force the
@@ -151,7 +163,7 @@ void CZPBurnTicker::TickThink( void )
 		{
 			g_flZombieNextBurnTick[i] += ZP_FIRE_TICK;
 			entvars_t *attacker = g_pevZombieBurnAttacker[i] ? g_pevZombieBurnAttacker[i] : VARS( INDEXENT( 0 ) );
-			p->TakeDamage( attacker, attacker, ZP_FIRE_DMG, DMG_BURN );
+			p->TakeDamage( attacker, attacker, ZP_FIRE_DMG * ZPWeaponDamageScale(), DMG_BURN );
 		}
 	}
 }
@@ -216,7 +228,7 @@ void CZPGrenade::Spawn( void )
 	else
 		SET_MODEL( ENT( pev ), "models/zpmod/w_freezebomb.mdl" );
 
-	pev->dmg = m_iType == MOLOTOV ? ZP_MOLOTOV_DAMAGE : 0;
+	pev->dmg = m_iType == MOLOTOV ? ZP_MOLOTOV_DAMAGE * ZPWeaponDamageScale() : 0;
 	UTIL_SetSize( pev, Vector( 0, 0, 0 ), Vector( 0, 0, 0 ) );
 	pev->gravity = 0.5f;
 	pev->friction = 0.8f;
@@ -424,7 +436,7 @@ void CZPGrenade::ExplodeMolotov( void )
 	if( tr.flFraction < 1.0f )
 		UTIL_DecalTrace( &tr, DECAL_SCORCH1 );
 
-	ZPGrenadeDamageZombies( attacker, origin, ZP_MOLOTOV_RADIUS, ZP_MOLOTOV_DAMAGE, DMG_BURN, true /* bIgnite */ );
+	ZPGrenadeDamageZombies( attacker, origin, ZP_MOLOTOV_RADIUS, ZP_MOLOTOV_DAMAGE * ZPWeaponDamageScale(), DMG_BURN, true /* bIgnite */ );
 
 	// become a lingering burning patch so it keeps hurting any zombie walking in
 	pev->movetype = MOVETYPE_NONE;
@@ -610,7 +622,12 @@ void CZPGrenade::ExplodeInfection( void )
 
 	ZP_Trace("ZPGREN INFECTION explode at (%.0f %.0f %.0f)\n", origin.x, origin.y, origin.z);
 
+	// Nerfed: one bomb converts at most one human - the closest one in range.
+	// It used to convert every human inside ZP_INFECTION_RADIUS, which turned a
+	// single throw into a round win.
 	int humansLeft = ZPCountAliveHumans();
+	edict_t *target = NULL;
+	float flBestDist = ZP_INFECTION_RADIUS + 1.0f;
 
 	for( int i = 1; i <= gpGlobals->maxClients; i++ )
 	{
@@ -628,15 +645,24 @@ void CZPGrenade::ExplodeInfection( void )
 
 		ZP_Trace("ZPGREN INFECTION target slot=%d dist=%.0f humansLeft=%d\n", i, dist, humansLeft);
 
-		if( humansLeft > 1 )
+		if( dist < flBestDist )
 		{
-			ZPInfectPlayer( ed, true );
-			humansLeft--;
-			continue;
+			flBestDist = dist;
+			target = ed;
 		}
+	}
 
-		// last human alive is killed instead of infected, ZP5.0 style
-		p->TakeDamage( attacker, attacker, 10000.0f, DMG_GENERIC );
+	if( target )
+	{
+		if( humansLeft > 1 )
+			ZPInfectPlayer( target, true );
+		else
+		{
+			// last human alive is killed instead of infected, ZP5.0 style
+			CBasePlayer *p = (CBasePlayer *)GET_PRIVATE( target );
+			if( p )
+				p->TakeDamage( attacker, attacker, 10000.0f, DMG_GENERIC );
+		}
 	}
 
 	UTIL_Remove( this );
