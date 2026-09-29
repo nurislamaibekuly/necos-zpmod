@@ -101,6 +101,12 @@ public:
 
 	int					random_seed;    // See that is shared between client & server for shared weapons code
 
+	// Sequence helpers that skip the two-frame placeholder clips the necozpmod_*
+	// models export for most of their GoldSrc weapon poses. A resolved sequence
+	// still has to carry real frames before it is safe to play.
+	int					VerifySequence( int iSequence );
+	int					LookupFirstUsableSequence( const char *const *ppszNames );
+
 	int					m_iPlayerSound;// the index of the sound list slot reserved for this player
 	int					m_iTargetVolume;// ideal sound volume. 
 	int					m_iWeaponVolume;// how loud the player's weapon is right now.

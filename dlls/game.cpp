@@ -488,6 +488,7 @@ void GameDLLInit( void )
 
 	CVAR_REGISTER( &zp_admin_pass );
 	CVAR_REGISTER( &zpmod_advertisementenabled );
+	CVAR_REGISTER( &zpmod_min_players );
 	CVAR_REGISTER( &zp_weapon_damage );
 
 	CVAR_REGISTER( &build_commit );

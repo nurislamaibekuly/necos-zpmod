@@ -224,7 +224,7 @@ void CZPGrenade::Spawn( void )
 	if( m_iType == MOLOTOV )
 		SET_MODEL( ENT( pev ), "models/zpmod/w_molotov.mdl" );
 	else if( m_iType == INFECTION )
-		SET_MODEL( ENT( pev ), "models/zpmod/w_hegrenade.mdl" );
+		SET_MODEL( ENT( pev ), "models/zpmod/w_infectionbomb.mdl" );
 	else
 		SET_MODEL( ENT( pev ), "models/zpmod/w_freezebomb.mdl" );
 
@@ -238,7 +238,7 @@ void CZPGrenade::Precache( void )
 {
 	PRECACHE_MODEL( "models/zpmod/w_molotov.mdl" );
 	PRECACHE_MODEL( "models/zpmod/w_freezebomb.mdl" );
-	PRECACHE_MODEL( "models/zpmod/w_hegrenade.mdl" );
+	PRECACHE_MODEL( "models/zpmod/w_infectionbomb.mdl" );
 	PRECACHE_MODEL( "sprites/explode1.spr" );
 	PRECACHE_MODEL( "sprites/fire.spr" );
 	PRECACHE_MODEL( "sprites/shockwave.spr" );
@@ -1093,7 +1093,7 @@ enum infectionbomb_anim_e
 	INFECTIONBOMB_DEPLOY
 };
 
-// Idle voice pool. v_hegrenade.mdl does carry sound events (code 5004) on its
+// Idle voice pool. v_infectionbomb.mdl does carry sound events (code 5004) on its
 // idle clip, at frames 1/50/75/115, but they name
 // "sound/weapons/Zombi_Bomb_Idle_1..4.wav" - a folder/case that does not exist
 // here, so the client drops them (see the FS_LoadSound warnings in engine.log)
@@ -1118,8 +1118,16 @@ public:
 	void Precache( void );
 	int GetItemInfo( ItemInfo *p );
 
-	const char *ViewModelPath( void ) const { return "models/zpmod/v_hegrenade.mdl"; }
-	const char *PlayerModelPath( void ) const { return "models/zpmod/p_hegrenade.mdl"; }
+	// Per-class viewmodel only. The player/world models stay shared so the
+	// thrown bomb and the third-person hands don't need eight variants.
+	const char *ViewModelPath( void ) const
+	{
+		int idx = m_pPlayer ? ENTINDEX( m_pPlayer->edict() ) : 0;
+		if ( idx < 1 || idx > gpGlobals->maxClients )
+			idx = 1;
+		return ZMBombViewModel( g_players[idx].ZMClass );
+	}
+	const char *PlayerModelPath( void ) const { return "models/zpmod/p_infectionbomb.mdl"; }
 	int PullPinAnim( void ) const { return INFECTIONBOMB_PINPULL; }
 	int ThrowAnim( void ) const { return INFECTIONBOMB_THROW; }
 	int DeployAnim( void ) const { return INFECTIONBOMB_DEPLOY; }
@@ -1143,16 +1151,17 @@ void CWeaponInfectionBomb::Spawn( void )
 {
 	Precache();
 	m_iId = WEAPON_INFECTIONBOMB;
-	SET_MODEL( ENT( pev ), "models/zpmod/w_hegrenade.mdl" );
+	SET_MODEL( ENT( pev ), "models/zpmod/w_infectionbomb.mdl" );
 	m_iDefaultAmmo = ZP_INFECTIONBOMB_DEFAULT_GIVE;
 	FallInit();
 }
 
+// the per-class viewmodels are precached by ZPPrecache() alongside the rest of
+// the class assets; this only covers the shared player/world models
 void CWeaponInfectionBomb::Precache( void )
 {
-	PRECACHE_MODEL( "models/zpmod/v_hegrenade.mdl" );
-	PRECACHE_MODEL( "models/zpmod/p_hegrenade.mdl" );
-	PRECACHE_MODEL( "models/zpmod/w_hegrenade.mdl" );
+	PRECACHE_MODEL( "models/zpmod/p_infectionbomb.mdl" );
+	PRECACHE_MODEL( "models/zpmod/w_infectionbomb.mdl" );
 	PRECACHE_MODEL( "sprites/shockwave.spr" );
 	PRECACHE_GENERIC( "sprites/weapon_infectionbomb.txt" );
 	PRECACHE_SOUND( "zpmod/zombi_bomb_deploy.wav" );

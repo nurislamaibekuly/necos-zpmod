@@ -105,18 +105,30 @@ BOOL CCrowbar::Deploy()
 	// zombies swing the claw hand, not the crowbar - restore the claw
 	// viewmodel every time they re-deploy (e.g. after switching from the
 	// infection bomb back to their melee)
-	if (ZPIsZombie(m_pPlayer->edict()))
+	if( ZPIsZombie(m_pPlayer->edict()))
 	{
-		if (!CanDeploy())
-			return FALSE;
-		m_pPlayer->pev->viewmodel = MAKE_STRING("models/zpmod/v_claws.mdl");
-		m_pPlayer->pev->weaponmodel = iStringNull;
-		m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.5f;
-		strcpy(m_pPlayer->m_szAnimExtention, "crowbar");
-		SendWeaponAnim(CROWBAR_DRAW);
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 1.0f;
-		m_flLastFireTime = 0.0f;
-		return TRUE;
+		// Route this through the SDK's own DefaultDeploy rather than assigning
+		// pev->viewmodel / pev->weaponmodel by hand. Two real reasons, and neither
+		// of them is the SIGSEGV:
+		//
+		//   viewmodel   <- MAKE_STRING(claw)
+		//   weaponmodel <- MAKE_STRING(models/p_crowbar.mdl), a real precached
+		//                 world model, so weaponmodel is never an unresolved 0
+		//   anim        <- 0, which is claw idle. Deliberately not CROWBAR_DRAW:
+		//                 index 1 on the 8-sequence claw viewmodel is slash1, a
+		//                 66-frame/2.2s clip, which is what read as a long hit
+		//                 animation every time the claw came out.
+		//
+		// ZPZombieSwing and the idle restore in ZPPlayerThink are the only things
+		// allowed to move the claw off sequence 0. See CCrowbar::WeaponIdle.
+		//
+		// NOTE: this was tried as the fix for the dedicated-server strcasecmp
+		// fault and did not help. The crash is byte-for-byte identical with and
+		// without it, which is how we know it is not this code. The actual
+		// diagnosis is in flight -- see ZPModelIndexGuarded in
+		// zpmod/zpmodelindex.cpp.
+		return DefaultDeploy( ZMClawViewModel(g_players[ENTINDEX(m_pPlayer->edict())].ZMClass),
+		                      "models/p_crowbar.mdl", 0, "crowbar" );
 	}
 #endif
 	return DefaultDeploy( "models/v_crowbar.mdl", "models/p_crowbar.mdl", CROWBAR_DRAW, "crowbar" );
@@ -125,6 +137,12 @@ BOOL CCrowbar::Deploy()
 void CCrowbar::Holster( int skiplocal /* = 0 */ )
 {
 	m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.5f;
+#if !CLIENT_DLL
+	// Same reason as Deploy/WeaponIdle: the claw viewmodel has 8 sequences and
+	// CROWBAR_HOLSTER (2) means "slash2" there, not a holster.
+	if( m_pPlayer && ZPIsZombie( m_pPlayer->edict() ) )
+		return;
+#endif
 	SendWeaponAnim( CROWBAR_HOLSTER );
 }
 
@@ -383,6 +401,32 @@ int CCrowbar::Swing( int fFirst )
 #if CROWBAR_IDLE_ANIM
 void CCrowbar::WeaponIdle( void )
 {
+	// A zombie never runs the crowbar's animation system.
+	//
+	// The crowbar numbers sequences 0-10 against v_crowbar.mdl, but a zombie's
+	// viewmodel is v_claws_<class>.mdl, which has only 8 sequences in a
+	// completely different order. Every crowbar index lands on the wrong claw
+	// clip, and CROWBAR_IDLE2/IDLE3 (9 and 10) are past the end of the table
+	// entirely -- the client reads a pseqdesc beyond the sequence array and
+	// animates off garbage numframes/fps/blend indices.
+	//
+	// (That out-of-range read is its own bug and is fixed here, but it is not
+	// the dedicated-server SIGSEGV. That fault is a strcasecmp on a model name
+	// and is still being tracked -- see ZPModelIndexGuarded.)
+	//
+	// The claw viewmodel is driven only by ZPZombieSwing and the idle restore
+	// in ZPPlayerThink, both of which use claw sequence numbers.
+#if !CLIENT_DLL
+	if( m_pPlayer && ZPIsZombie( m_pPlayer->edict() ) )
+	{
+		// Keep pushing the deadline out so ItemPostFrame() has nothing to do
+		// and CBasePlayerWeapon::ItemPostFrame never falls through to the base
+		// idle either.
+		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 1.0f;
+		return;
+	}
+#endif
+
 	if( m_flTimeWeaponIdle < UTIL_WeaponTimeBase() )
 	{
 		int iAnim;

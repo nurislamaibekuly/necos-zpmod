@@ -22,12 +22,28 @@ enum Role {
     ROLE_SPECTATOR
 };
 
+// Zombie classes, ordered to match g_zmClasses[] in zpmod.cpp. The table is the
+// single source of truth for stats/models/sounds; always index it with these.
 enum ZMClasses {
-    ZM_CLASS_REGULAR,
-    ZM_CLASS_FAST,
+    ZM_CLASS_ZOMBIE,
+    ZM_CLASS_SPEED,
+    ZM_CLASS_DEIMOS,
+    ZM_CLASS_HEAL,
+    ZM_CLASS_HEAVY,
     ZM_CLASS_TANK,
-    ZM_CLASS_JUMPER,
-    ZM_CLASS_BOSS
+    ZM_CLASS_CHINA,
+    ZM_CLASS_BOSS,
+    ZM_CLASS_COUNT
+};
+
+// right-click abilities (only these classes have one)
+enum ZMAbility {
+    ZMABILITY_NONE,
+    ZMABILITY_DASH,   // speed: burst forward
+    ZMABILITY_HEAL,   // heal: aura that tops up nearby zombies
+    ZMABILITY_SLAM,   // tank: ground slam, area damage
+    ZMABILITY_LEAP,   // china: leap at the crosshair
+    ZMABILITY_RAGE    // boss: enrage burst
 };
 
 // how the first infection happens this round (chosen at countdown)
@@ -109,9 +125,9 @@ struct ZPPlayer {
     int headshots;
     int lastInfectKiller;
     float lastInfectTime;
-    float chargeCooldown;
     float beamCooldown;
     int clawSwing;
+    float nextClawAnim;    // when the claw viewmodel may return to idle
     int aimTarget;
     float healCooldown;
     float adrenalineCooldown;
@@ -137,6 +153,12 @@ struct ZPPlayer {
     bool bossRoundStart;  // forced to spawn as a BOSS zombie when infected
     float slowUntil;      // post-infection slowdown
     float eventSlowUntil;
+    float abilityCooldown; // per-class right-click, see ZMAbility
+    float rageUntil;       // deimos/boss enrage window
+    float healAuraUntil;   // healer: aura keeps pulsing until this time
+    float bossRageSpeed;   // boss: permanent +speed earned this round
+    int rageStacks;        // deimos/boss: hits taken while raging
+    float nextHealPulse;   // heal: next aura tick
 };
 
 extern ZPRound g_round;
@@ -191,9 +213,44 @@ void ZPHUD();
 bool ZPIsPlayerConnected(edict_t* player);
 int ZPCountConnectedPlayers(void);
 bool ZPIsZombie(edict_t* player);
+
+// Re-applies the model a player's current role requires, if v.modelindex does
+// not already point at it. Returns TRUE if the model was changed.
+bool ZPEnsurePlayerModel(edict_t* player);
+
+// Re-asserts v.modelindex from v.model when CheckPowerups has stomped the index.
+void ZPSyncPlayerModelIndex(edict_t* player);
 bool ZPIsDead(edict_t* player);
 bool ZPIsHuman(edict_t* player);
+
+// ---- zombie class table (see g_zmClasses[] in zpmod.cpp) ----
+bool ZMClassValid(int cls);
+const char* ZMClassName(int cls);
+const char* ZMClassModel(int cls);        // bare model folder, e.g. "necozpmod_tank"
+const char* ZMClawViewModel(int cls);     // models/zpmod/v_claws_<class>.mdl
+const char* ZMBombViewModel(int cls);     // models/zpmod/v_infectionbomb_<class>.mdl
+const char* ZMClassHurtSound(int cls, int variant);
+const char* ZMClassDeathSound(int cls, int variant);
+float ZMClassHealth(int cls);
+float ZMClassArmor(int cls);
+float ZMClassSpeed(int cls);
+float ZMClassGravity(int cls);
+float ZMClassClawDamage(int cls);
+float ZMClassDamageTaken(int cls);        // multiplier applied to incoming damage
+int   ZMClassAbility(int cls);            // ZMAbility
+int   ZMClassColor(int cls);              // hud + noclip glow, packed 0xRRGGBB
+const int* ZMClassClawAnims(int cls, int* count);
+const int* ZMClassClawAnimFrames(int cls, int* count);
+const char* const* ZMClassBodyClaws(int cls);  // player-model body anims, NULL-terminated
+
 void ZPZombieSwing(edict_t* player);
+void ZPSendClawAnim(edict_t* player, int seq);
+void ZPZombieHeal(edict_t* player, float amount);
+float ZPZombieClawDamage(edict_t* player);
+float ZPZombieDamageTaken(edict_t* player);
+void ZPZombieOnDamaged(edict_t* player, float damage);
+void ZPZombieOnKilled(edict_t* player);
+void ZPRoundResetAbilities(int playerIndex);
 bool ZPDied(edict_t* player, int attackerIndex);
 void ZPSendInfection(edict_t* victim, int infectorIndex);
 void ZPOnInfect(edict_t* victim, int infectorIndex);
@@ -207,6 +264,12 @@ void ZPPlayerJoin(edict_t* player);
 void ZPPlayerDisconnect(edict_t* player);
 void ZPSetPlayerModel(edict_t* player, const char* modelName);
 void ZPRoundResetPlayer(edict_t* player);
+
+extern cvar_t zpmod_min_players;
+
+// Minimum connected players required for a round to start; the round resets
+// every player to a human below this. Defaults to 2. Set to 1 to test solo.
+int ZPMinPlayers(void);
 void ZPMapVoteReset(void);
 void ZPMapVoteOpen(void);
 void ZPMapVoteThink(void);

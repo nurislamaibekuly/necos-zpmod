@@ -39,6 +39,24 @@ if(NOT MSVC)
 		add_compile_options(-fomit-frame-pointer) # GCC/Clang flag
 		add_compile_options(-ftree-vectorize) # GCC/Clang flag
 		add_compile_options(-funsafe-math-optimizations) # GCC/Clang flag
+
+		# ZP_DEBUG_SYMBOLS=ON restores the unwind tables and frame pointers that
+		# the block above strips, so a SIGSEGV inside this dylib can actually be
+		# unwound by the engine's crash handler. Without this it prints
+		# "no debug info in Mach-O executable" for every frame and the crash is
+		# undiagnosable. Opt-in so shipped builds stay stripped; enable it when
+		# you need a backtrace.
+		if(ZP_DEBUG_SYMBOLS)
+			add_compile_options(-g)
+			add_compile_options(-funwind-tables)
+			add_compile_options(-fasynchronous-unwind-tables)
+			add_compile_options(-fno-omit-frame-pointer)
+			# Undo -fvisibility=hidden from above so function names survive into
+			# the dylib's symbol table. The DWARF is dropped at link time here, so
+			# these are what make a crash address resolvable by hand:
+			#   nm -C game/dlls/zpserver_arm64.dylib | sort
+			add_compile_options(-fvisibility=default)
+		endif()
 	endif()
 else()
 	add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE)
@@ -151,6 +169,7 @@ set (SVDLL_SOURCES
 	zpmod/zpmod_grenades.cpp
 	zpmod/zpmod_stats.cpp
 	zpmod/zpmod_supplybox.cpp
+	zpmod/zpmodelindex.cpp
 	../game_shared/voice_gamemgr.cpp
 	../pm_shared/pm_debug.c
 	../pm_shared/pm_math.c

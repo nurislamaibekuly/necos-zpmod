@@ -30,7 +30,17 @@ extern enginefuncs_t g_engfuncs;
 #define PRECACHE_SOUND	(*g_engfuncs.pfnPrecacheSound)
 #define PRECACHE_GENERIC	(*g_engfuncs.pfnPrecacheGeneric)
 #define SET_MODEL		(*g_engfuncs.pfnSetModel)
-#define MODEL_INDEX		(*g_engfuncs.pfnModelIndex)
+// Every MODEL_INDEX() call is routed through this wrapper. It is byte-for-byte
+// equivalent to (*g_engfuncs.pfnModelIndex) on a good pointer, but before calling
+// it confirms the name is actually readable. pfnModelIndex walks the model table
+// with strcasecmp() and dereferences the name it is given, so an unreadable name
+// kills the server inside libsystem_c.dylib`strcasecmp_l with no other symptom.
+//
+// The check exists purely to find out which call site is passing the bad pointer,
+// so it reports the caller return address (symbolizable against the dylib) and
+// then declines to make the call. That turns a hard crash into a log line.
+int ZPModelIndexGuarded( const char *name );
+#define MODEL_INDEX		ZPModelIndexGuarded
 #define MODEL_FRAMES	(*g_engfuncs.pfnModelFrames)
 #define SET_SIZE		(*g_engfuncs.pfnSetSize)
 #define CHANGE_LEVEL	(*g_engfuncs.pfnChangeLevel)

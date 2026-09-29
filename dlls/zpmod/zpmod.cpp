@@ -5,6 +5,7 @@
 #include "game.h"
 #include "edict.h"
 #include "zpmod.h"
+#include "studio.h"
 #include "player.h"
 #include "weapons.h"
 #include "decals.h"
@@ -27,6 +28,301 @@ extern int gmsgTextMsg;
 void ZPRoundWinSound(edict_t* player, const char* winSound, const char* ambientPrefix, int ambientCount);
 
 void FindHullIntersection( const Vector &vecSrc, TraceResult &tr, float *mins, float *maxs, edict_t *pEntity );
+
+// ---------------------------------------------------------------------------
+// Zombie class table.
+//
+// Single source of truth for the eight classes: stats, models, sounds, melee
+// anims and ability. Everything else goes through the ZMClass*() accessors
+// below, so rebalancing a class is a one-line edit here.
+//
+// The claw anim lists are per-class because the viewmodels are not uniform:
+// v_claws_deimos.mdl has 9 sequences, the other seven have 8. A shared
+// {3,4,5,6,7,8} list would send sequence 8 (out of range) on every other
+// class and stall the melee animation mid-swing.
+// ---------------------------------------------------------------------------
+
+struct ZMClassDef {
+    const char* name;        // display name
+    const char* tag;         // lowercase id, also the asset file suffix
+    const char* model;       // bare folder under models/player/
+    float health;
+    float armor;
+    float speed;
+    float gravity;
+    float clawDamage;
+    float damageTaken;       // multiplier applied to damage this class takes
+    int ability;             // ZMAbility
+    int color;               // 0xRRGGBB, used for hud text and noclip glow
+    const char* hurtSounds[2];
+    const char* deathSounds[2];
+    const int* clawAnims;
+    int clawAnimCount;
+    // Frame count of each entry in clawAnims, same order. See g_kClawFrames*.
+    const int* clawAnimFrames;
+    // Player-model body sequences, cycled per swing. Looked up by name at
+    // runtime and NULL-terminated, because the eight models do NOT ship the
+    // same set: the converted CS ones carry "zbs_attack*", while heavy/tank/
+    // boss carry no dedicated attack anim at all. A table whose first entry is
+    // NULL means "no such anim", and the swing falls back to the generic
+    // onehanded shoot.
+    const char* const* bodyClaws;
+};
+
+// Viewmodel sequence indices, read off the v_claws_*.mdl headers rather than
+// guessed. Every one of the eight carries the same 0-7 layout, with deimos
+// adding a ninth:
+//
+//   [0] idle      act=1, flagged looping
+//   [1] slash1
+//   [2] slash2
+//   [3] draw
+//   [4] stab
+//   [5] stab_miss
+//   [6] midslash1
+//   [7] midslash2
+//   [8] skill      (deimos only)
+//
+// The hit cycle is the slash pair ONLY: slash1, slash2.
+//
+// midslash1/midslash2 (6,7) look like they belong in a swing cycle and do not.
+// They are a separate long windup -- heal makes it obvious, 31 frames for
+// slash against 61 for midslash, so it takes twice as long and reads as a big
+// slow overhead instead of a claw hit. An earlier revision interleaved them
+// (slash1, midslash1, slash2, midslash2), which meant every other attack
+// played the long windup. They are not used for the normal hit.
+//
+// stab (4) and stab_miss (5) are a thrust and its whiff, not a claw swipe, and
+// draw (3) is the weapon-draw pose. None of the three are hit animations.
+static const int g_kClawAnims2[] = { 1, 2 };
+
+// deimos is the exception: its slash1/slash2 are 2-frame stubs, the same empty
+// placeholder the ref_aim_* clips are on the player models. A 2-frame clip at
+// 30fps is a single-frame flash, so it has to fall back to a real clip. midslash
+// is the nearest true swipe available and, at 46-48 frames, is the same length
+// as the other classes' slashes -- so it is the long-windup complaint above
+// that does not apply here.
+static const int g_kClawAnimsDeimos[] = { 6, 7 };
+
+// Frame counts for the sequences above, in the same order, read off each
+// v_claws_*.mdl header. The server DLL has no pfnGetModel, so the viewmodel's
+// studio header is not reachable from here and the clip length cannot be read
+// at runtime; it has to travel with the index table. Without it every class
+// would use one shared duration and either get cut off or hang on the last
+// frame. heal is the outlier (31 against 55-66 elsewhere), so it gets its own.
+static const int g_kClawFrames66[] = { 66, 66 };
+static const int g_kClawFrames55[] = { 55, 55 };
+static const int g_kClawFramesHeal[] = { 31, 31 };
+static const int g_kClawFramesDeimos[] = { 46, 48 };
+
+// All eight viewmodels play their attack clips at 30 fps.
+static const float ZMCLAW_VIEW_FPS = 30.0f;
+
+// Idle is sequence 0 on all eight, and it is the only one flagged as looping.
+// ZPZombieSwing has to return to it or the viewmodel freezes on the last swing
+// frame; see the idle restore in ZPPlayerThink.
+static const int ZMCLAW_IDLE = 0;
+
+// Highest valid sequence in any v_claws_*.mdl. Seven of the eight have exactly
+// 8 sequences (0-7); deimos has 9. Guarding against 8 is deliberate -- a real
+// deimos "skill" is at index 8, and clamping at 9 would still let a 0-7 index
+// through on the other seven models.
+static const int ZMCLAW_MAX_SEQ = 8;
+
+// Body claw anims for the models that have them. Ref_aim holds the windup,
+// the two _run entries are the actual swipes (a walk swipe and a run swipe on
+// the converted models). Order matters: it is the swing cycle.
+static const char* const g_kBodyClaws3[] = { "zbs_attack_walk", "zbs_attack1_run", "zbs_attack2_run" };
+static const char* const g_kBodyClaws2[] = { "zbs_attack_walk", "zbs_attack1_run" };
+static const char* const g_kBodyClawsNone[] = { NULL };
+
+// Spawn distribution, index-aligned with g_zmClasses[]. Deliberately separate
+// from the stat columns: this is how often a class shows up, not how strong it
+// is, and the two want to be tuned independently.
+static const int g_zmClassWeights[ZM_CLASS_COUNT] = {
+    /* zombie */ 36,
+    /* speed  */ 18,
+    /* deimos */ 12,
+    /* heal   */ 12,
+    /* heavy  */  9,
+    /* tank   */  8,
+    /* china  */  3,
+    /* boss   */  2
+};
+static const int kZMClassRollTotal = 100;
+
+static const ZMClassDef g_zmClasses[ZM_CLASS_COUNT] = {
+    //  name        tag        model               hp   armor speed grav claw taken  ability        color
+    // Only 5 of the 8 models ship a zbs_ clip set. boss/heavy/tank have none at
+    // all, so they deliberately fall back to the plain locomotion names.
+    { "ZOMBIE",  "zombie",  "necozpmod_zombie", 2000, 200, 290, 0.83f,  70, 1.00f, ZMABILITY_NONE, 0xFF2828,
+      { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
+      { "zpmod/death_1.wav", "zpmod/death_2.wav" },
+      g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClaws2 },
+
+    { "SPEED",   "speed",   "necozpmod_speed",   800, 100, 310, 0.64f,  58, 1.00f, ZMABILITY_DASH,  0x1EDCFF,
+      { "zpmod/hurt_female_1.wav", "zpmod/hurt_female_2.wav" },
+      { "zpmod/death_female_1.wav", "zpmod/death_female_2.wav" },
+      g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClaws3 },
+
+    { "DEIMOS",  "deimos",  "necozpmod_deimos", 2000, 200, 300, 0.72f,  70, 1.00f, ZMABILITY_NONE,  0xB020F0,
+      { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
+      { "zpmod/death_1.wav", "zpmod/death_2.wav" },
+      g_kClawAnimsDeimos, 2, g_kClawFramesDeimos, g_kBodyClaws3 },
+
+    { "HEALER",  "heal",    "necozpmod_heal",   2000, 200, 290, 0.83f,  70, 1.00f, ZMABILITY_HEAL,  0x30FF60,
+      { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
+      { "zpmod/death_1.wav", "zpmod/death_2.wav" },
+      g_kClawAnims2, 2, g_kClawFramesHeal, g_kBodyClaws3 },
+
+    { "HEAVY",   "heavy",   "necozpmod_heavy",  3000, 300, 250, 0.95f,  85, 0.70f, ZMABILITY_NONE,  0xFF9C20,
+      { "zpmod/hurt_heavy_1.wav", "zpmod/hurt_heavy_2.wav" },
+      { "zpmod/death_heavy_1.wav", "zpmod/death_heavy_2.wav" },
+      g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClawsNone },
+
+    { "TANK",    "tank",    "necozpmod_tank",   3000, 300, 240, 1.05f, 100, 0.75f, ZMABILITY_SLAM,  0xFF8C14,
+      { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
+      { "zpmod/death_1.wav", "zpmod/death_2.wav" },
+      g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClawsNone },
+
+    { "CHINA",   "china",   "necozpmod_china",  3000, 300, 270, 0.95f,  85, 0.75f, ZMABILITY_LEAP,  0xFFC83C,
+      { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
+      { "zpmod/death_1.wav", "zpmod/death_2.wav" },
+      g_kClawAnims2, 2, g_kClawFrames55, g_kBodyClaws3 },
+
+    { "BOSS",    "boss",    "necozpmod_boss",   5000, 500, 250, 0.90f, 120, 0.65f, ZMABILITY_RAGE,  0xFF0F1E,
+      { "zpmod/hurt_heavy_1.wav", "zpmod/hurt_heavy_2.wav" },
+      { "zpmod/death_heavy_1.wav", "zpmod/death_heavy_2.wav" },
+      g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClawsNone }
+};
+
+bool ZMClassValid(int cls) {
+    return cls >= 0 && cls < ZM_CLASS_COUNT;
+}
+
+static const ZMClassDef& ZMClassInfo(int cls) {
+    static const ZMClassDef fallback = {
+        "ZOMBIE", "zombie", "necozpmod_zombie", 2000, 200, 290, 0.83f, 70, 1.00f,
+        ZMABILITY_NONE, 0xFF2828,
+        { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
+        { "zpmod/death_1.wav", "zpmod/death_2.wav" },
+        g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClaws2
+    };
+    if (!ZMClassValid(cls)) return fallback;
+    return g_zmClasses[cls];
+}
+
+const char* ZMClassName(int cls) { return ZMClassInfo(cls).name; }
+const char* ZMClassModel(int cls) { return ZMClassInfo(cls).model; }
+float ZMClassHealth(int cls) { return ZMClassInfo(cls).health; }
+float ZMClassArmor(int cls) { return ZMClassInfo(cls).armor; }
+float ZMClassSpeed(int cls) { return ZMClassInfo(cls).speed; }
+float ZMClassGravity(int cls) { return ZMClassInfo(cls).gravity; }
+float ZMClassClawDamage(int cls) { return ZMClassInfo(cls).clawDamage; }
+float ZMClassDamageTaken(int cls) { return ZMClassInfo(cls).damageTaken; }
+int ZMClassAbility(int cls) { return ZMClassInfo(cls).ability; }
+int ZMClassColor(int cls) { return ZMClassInfo(cls).color; }
+
+// The callers pass the result straight to MAKE_STRING/SET_MODEL/PRECACHE_*, so
+// a small ring of buffers is enough to keep two classes from clobbering each
+// other inside one expression.
+static char* ZMClassAssetPath(char* buf, size_t size, const char* prefix, const char* tag) {
+    snprintf(buf, size, "%s%s.mdl", prefix, tag);
+    return buf;
+}
+
+const char* ZMClawViewModel(int cls) {
+    static char bufs[4][64];
+    static int next = 0;
+    char* buf = bufs[next];
+    next = (next + 1) & 3;
+    return ZMClassAssetPath(buf, 64, "models/zpmod/v_claws_", ZMClassInfo(cls).tag);
+}
+
+const char* ZMBombViewModel(int cls) {
+    static char bufs[4][64];
+    static int next = 0;
+    char* buf = bufs[next];
+    next = (next + 1) & 3;
+    return ZMClassAssetPath(buf, 64, "models/zpmod/v_infectionbomb_", ZMClassInfo(cls).tag);
+}
+
+const char* ZMClassHurtSound(int cls, int variant) {
+    return ZMClassInfo(cls).hurtSounds[(variant & 1)];
+}
+
+const char* ZMClassDeathSound(int cls, int variant) {
+    return ZMClassInfo(cls).deathSounds[(variant & 1)];
+}
+
+const int* ZMClassClawAnimFrames(int cls, int* count) {
+    const ZMClassDef& def = ZMClassInfo(cls);
+    if (count) *count = def.clawAnimCount;
+    return def.clawAnimFrames;
+}
+
+const int* ZMClassClawAnims(int cls, int* count) {
+    const ZMClassDef& def = ZMClassInfo(cls);
+    if (count) *count = def.clawAnimCount;
+    return def.clawAnims;
+}
+
+const char* const* ZMClassBodyClaws(int cls) {
+    return ZMClassInfo(cls).bodyClaws;
+}
+
+// ---------------------------------------------------------------------------
+// Per-class ability tuning.
+//
+// Server-side only, on purpose: pev->viewmodel is already replicated, so the
+// per-class claw/bomb viewmodels need no client DLL support.
+// ---------------------------------------------------------------------------
+
+#define ZM_DASH_SPEED      900.0f
+#define ZM_DASH_LIFT       180.0f
+#define ZM_DASH_COOLDOWN   6.0f
+
+#define ZM_LEAP_SPEED      800.0f
+#define ZM_LEAP_LIFT       420.0f
+#define ZM_LEAP_COOLDOWN   7.0f
+
+#define ZM_HEAL_DURATION   6.0f
+#define ZM_HEAL_RADIUS     160.0f
+#define ZM_HEAL_INTERVAL   0.5f
+#define ZM_HEAL_PER_TICK   10.0f    // x2 per second, so 20 hp/s
+#define ZM_HEAL_COOLDOWN   10.0f
+
+#define ZM_SLAM_RADIUS     120.0f
+#define ZM_SLAM_DAMAGE     60.0f
+#define ZM_SLAM_COOLDOWN   8.0f
+
+// deimos and boss share the "get angry when shot" passive: every hit taken
+// stacks a speed ramp for a few seconds, capped so it stays readable
+#define ZM_RAGE_DURATION   8.0f
+#define ZM_RAGE_COOLDOWN   20.0f
+#define ZM_RAGE_DAMAGE     1.2f     // claw multiplier while raging
+#define ZM_RAGE_STACK_CAP  6
+#define ZM_RAGE_PER_STACK  0.05f    // +5% speed per stack, so +30% at the cap
+
+// deimos's rage is shorter than the boss's, since deimos has no active ability
+#define ZM_DEIMOS_RAGE_TIME   5.0f
+
+// boss: each kill banks permanent speed for the rest of the round
+#define ZM_BOSS_KILL_SPEED 40.0f
+#define ZM_BOSS_MAX_SPEED  160.0f
+
+// china: claw bonus while actually running at someone
+#define ZM_CHINA_MOVE_SPEED  200.0f
+#define ZM_CHINA_MOVE_DAMAGE 1.25f
+
+// speed multiplier from the current rage stacks, 1.0 when not raging
+static float ZMRageSpeedMultiplier(const ZPPlayer& p) {
+    if (p.rageUntil <= gpGlobals->time) return 1.0f;
+    int stacks = p.rageStacks;
+    if (stacks > ZM_RAGE_STACK_CAP) stacks = ZM_RAGE_STACK_CAP;
+    if (stacks < 0) stacks = 0;
+    return 1.0f + stacks * ZM_RAGE_PER_STACK;
+}
 
 int RoleToInt(Role r) {
     switch(r) {
@@ -56,6 +352,92 @@ const char* NumberWord(int n) {
 bool ZPIsZombie(edict_t* player) {
     if (!player) return false;
     return (player->v.team == RoleToInt(ROLE_ZOMBIE));
+}
+
+// Re-assert v.modelindex from v.model when the two have drifted apart.
+//
+// These are two independent fields: SV_SetModel writes both together, but
+// CheckPowerups() in player.cpp resets pev->modelindex back to the stock
+// player index every frame to keep the player.mdl eye model off the player
+// entity, which leaves v.model still naming the class model. pfnGetModelPtr
+// resolves the studio header from v.modelindex, so a class player's header
+// silently reverts to the stock table every frame and all sequence indices get
+// resolved against the wrong model.
+//
+// Re-issue SET_MODEL, which rewrites both fields from the path v.model already
+// holds. Only runs when they actually disagree.
+void ZPSyncPlayerModelIndex( edict_t *player )
+{
+    if( !player || player->free || !player->v.model )
+        return;
+
+    // Zombies only, and deliberately so. CheckPowerups forces the stock player
+    // index for humans on purpose: a human's sequences are numbered against
+    // player.mdl and remapped client-side, so "repairing" a human's index here
+    // would resolve their walk/run/idle against a custom model's own sequence
+    // table and break the stock animations.
+    if( !ZPIsZombie( player ) )
+        return;
+
+    const char *pszModel = STRING( player->v.model );
+    if( !pszModel || !pszModel[0] )
+        return;
+
+    // Never write an index the engine cannot resolve. modelindex == 0 makes
+    // Mod_Handle() return a null model and the engine dereferences it while
+    // serialising the entity, which takes the server down.
+    int iModel = MODEL_INDEX( pszModel );
+    if( iModel == 0 || iModel == player->v.modelindex )
+        return;
+
+    player->v.modelindex = iModel;
+}
+
+// Re-apply the model this player's role calls for when v.modelindex has drifted
+// off it.
+//
+// pfnGetModelPtr resolves the studio header through v.modelindex, and
+// SV_SetModel rewrites both v.model and v.modelindex together. So every call
+// that re-applies a model -- ZPRoundResetPlayer on a round reset, Spawn() on
+// respawn -- silently puts the modelindex back on the stock player while the
+// class is still active. SetAnimation then picks sequence indices against the
+// stock table, and the client renders them against the class model. The two
+// disagree for as long as nobody corrects it, which is what produced the doll
+// pose and the jump playing the swim clip.
+//
+// Zombies only. It runs from SetAnimation, i.e. every frame for every player,
+// so it must never touch humans: CheckPowerups owns the stock player index for
+// them on purpose, and a human running a custom model is still numbered against
+// player.mdl server-side. Re-asserting here would fight that and break stock
+// animations.
+//
+// It also deliberately uses SET_MODEL rather than ZPSetPlayerModel. The latter
+// rewrites the client userinfo key, which is right once at infection time but
+// is network traffic and an info-string rebuild if it ever fires on this path.
+bool ZPEnsurePlayerModel(edict_t* player) {
+    if (!player || player->free) return false;
+
+    if (!ZPIsZombie(player)) return false;
+
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > (int)gpGlobals->maxClients) return false;
+
+    ZMClasses cls = g_players[idx].ZMClass;
+    if (!ZMClassValid(cls)) return false;
+
+    const char* want = ZMClassModel(cls);
+    if (!want || !want[0]) return false;
+
+    char szPath[160];
+    snprintf(szPath, sizeof(szPath), "models/player/%s/%s.mdl", want, want);
+
+    if (player->v.model && !stricmp(STRING(player->v.model), szPath)) return false;
+
+    ZP_Trace("[model] re-assert ent=%d -> %s (was %s)\n", idx, want,
+             player->v.model ? STRING(player->v.model) : "<null>");
+
+    SET_MODEL(player, szPath);
+    return true;
 }
 
 bool ZPIsHuman(edict_t* player) {
@@ -97,7 +479,7 @@ void ZPRoundResetPlayer(edict_t* ed) {
     if (!pPlayer) return;
 
     int idx = ENTINDEX(ed);
-    g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].ZMClass = ZM_CLASS_ZOMBIE;
     g_players[idx].isFrozen = false;
     g_players[idx].lastHuman = false;
     g_players[idx].killedByHeadshot = false;
@@ -106,7 +488,6 @@ void ZPRoundResetPlayer(edict_t* ed) {
     g_players[idx].headshots = 0;
     g_players[idx].lastInfectKiller = 0;
     g_players[idx].lastInfectTime = 0.0f;
-    g_players[idx].chargeCooldown = 0.0f;
     g_players[idx].beamCooldown = 0.0f;
     g_players[idx].clawSwing = 0;
     g_players[idx].bossRoundStart = false;
@@ -121,6 +502,7 @@ void ZPRoundResetPlayer(edict_t* ed) {
     g_players[idx].frozenUntil = 0.0f;
     g_players[idx].aimTarget = 0;
     g_players[idx].noclip = false;
+    ZPRoundResetAbilities(idx);
 
     // clear any class glow/freeze tint from the previous round
     ed->v.renderfx = kRenderFxNone;
@@ -171,7 +553,7 @@ void ZPPlayerJoin(edict_t* player) {
     }
 
     g_players[idx].ed = player;
-    g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].ZMClass = ZM_CLASS_ZOMBIE;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
 
@@ -219,7 +601,7 @@ void ZPPlayerDisconnect(edict_t* player) {
 
     g_players[idx].ed = nullptr;
     g_players[idx].originalModel[0] = '\0';
-    g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].ZMClass = ZM_CLASS_ZOMBIE;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
     g_players[idx].welcomeMusicPending = false;
@@ -228,7 +610,7 @@ void ZPPlayerDisconnect(edict_t* player) {
     player->v.team = 0;
 
     int connected = ZPCountConnectedPlayers();
-    if (connected < 2) {
+    if (connected < ZPMinPlayers()) {
         g_round.state = RS_PREP;
         g_round.countdownStarted = false;
         g_round.lastAnnounce = -1;
@@ -315,14 +697,11 @@ void ZPThunderStrike(edict_t* player) {
     UTIL_ScreenFade(pPlayer, white, 0.15f, 0.05f, 255, FFADE_IN);
 }
 
-const char* ZMClassName(int cls) {
-    switch (cls) {
-        case ZM_CLASS_FAST:   return "FAST ZOMBIE";
-        case ZM_CLASS_TANK:   return "TANK ZOMBIE";
-        case ZM_CLASS_JUMPER: return "JUMPER ZOMBIE";
-        case ZM_CLASS_BOSS:   return "BOSS ZOMBIE";
-        default:              return "ZOMBIE";
-    }
+// the zombie class colour doubles as the noclip/admin glow tint
+static void ZMApplyGlow(edict_t* player, int cls, float amt) {
+    int rgb = ZMClassColor(cls);
+    player->v.rendercolor = Vector((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+    player->v.renderamt = amt;
 }
 
 // applies per-class speed/gravity/render every frame for zombies so nothing
@@ -335,14 +714,13 @@ void ZPApplyZombieClass(edict_t* player)
 
     int cls = g_players[idx].ZMClass;
 
-    float speed = 240.0f, gravity = 0.8f;
-    switch (cls) {
-        case ZM_CLASS_FAST:    speed = 320.0f; gravity = 0.8f;  break;
-        case ZM_CLASS_TANK:    speed = 205.0f; gravity = 1.0f;  break;
-        case ZM_CLASS_JUMPER:  speed = 250.0f; gravity = 0.42f; break;
-        case ZM_CLASS_BOSS:    speed = 240.0f; gravity = 0.8f;  break;
-        default:               speed = 240.0f; gravity = 0.8f;  break;
-    }
+    // class base, plus the boss's permanent per-kill ramp and any active rage
+    float speed = ZMClassSpeed(cls);
+    if (g_players[idx].bossRageSpeed > 0.0f)
+        speed += g_players[idx].bossRageSpeed;
+    speed *= ZMRageSpeedMultiplier(g_players[idx]);
+
+    float gravity = ZMClassGravity(cls);
 
     if (g_players[idx].frozenUntil > gpGlobals->time) {
         player->v.movetype = MOVETYPE_NONE;
@@ -358,14 +736,7 @@ void ZPApplyZombieClass(edict_t* player)
         player->v.movetype = MOVETYPE_NOCLIP;
         player->v.gravity = 0.0f;
         player->v.renderfx = kRenderFxGlowShell;
-        player->v.renderamt = cls == ZM_CLASS_BOSS ? 80 : cls == ZM_CLASS_TANK ? 70 : 45;
-        switch (cls) {
-            case ZM_CLASS_FAST:    player->v.rendercolor = Vector(30, 220, 255);  break;
-            case ZM_CLASS_TANK:    player->v.rendercolor = Vector(255, 140, 20);  break;
-            case ZM_CLASS_JUMPER:  player->v.rendercolor = Vector(80, 255, 70);   break;
-            case ZM_CLASS_BOSS:    player->v.rendercolor = Vector(255, 15, 30);   break;
-            default:               player->v.rendercolor = Vector(255, 40, 40);   break;
-        }
+        ZMApplyGlow(player, cls, cls == ZM_CLASS_BOSS ? 80.0f : cls == ZM_CLASS_TANK ? 70.0f : 45.0f);
         return;
     }
 
@@ -375,14 +746,7 @@ void ZPApplyZombieClass(edict_t* player)
         player->v.maxspeed = speed * 1.3f + ZPFeatureSpeedMultiplier();
     player->v.gravity = gravity * ZPFeatureGravity();
     player->v.renderfx = kRenderFxGlowShell;
-    player->v.renderamt = cls == ZM_CLASS_BOSS ? 80 : cls == ZM_CLASS_TANK ? 70 : 45;
-    switch (cls) {
-        case ZM_CLASS_FAST:    player->v.rendercolor = Vector(30, 220, 255);  break;
-        case ZM_CLASS_TANK:    player->v.rendercolor = Vector(255, 140, 20);  break;
-        case ZM_CLASS_JUMPER:  player->v.rendercolor = Vector(80, 255, 70);   break;
-        case ZM_CLASS_BOSS:    player->v.rendercolor = Vector(255, 15, 30);   break;
-        default:               player->v.rendercolor = Vector(255, 40, 40);   break;
-    }
+    ZMApplyGlow(player, cls, cls == ZM_CLASS_BOSS ? 80.0f : cls == ZM_CLASS_TANK ? 70.0f : 45.0f);
 }
 
 // shared overlay for humans (admin noclip / freeze) so movement stays stable
@@ -419,31 +783,50 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     int idx = ENTINDEX(player);
     if (idx < 1 || idx > gpGlobals->maxClients) return;
 
-    g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].ZMClass = ZM_CLASS_ZOMBIE;
+    ZPRoundResetAbilities(idx);
 
     bool forceBoss = g_players[idx].bossRoundStart;
     g_players[idx].bossRoundStart = false;
 
-    // Bosses are meant to be an event, not a lottery: 2% per natural infection
-    // (was 1 in 12, which handed out a boss to most first-zombie rolls and to
-    // roughly one in twelve plague spreads).
-    int r = RANDOM_LONG(1, 50);
-
-    if (r == 1 && wasInfectedBySomeone == false) {
+    // Weighted roll over the eight classes. Kept as its own table because this
+    // is about spawn distribution, not balance: a boss should stay an event
+    // (~2% of natural infections) while plain zombies stay the common case.
+    if ((!wasInfectedBySomeone && !forceBoss && RANDOM_LONG(1, 50) == 1) ||
+        (forceBoss && !wasInfectedBySomeone)) {
         g_players[idx].ZMClass = ZM_CLASS_BOSS;
-        EMIT_SOUND(player, CHAN_AUTO, "ambience/the_horror3.wav", 1.0, ATTN_NONE);
-    } else if (forceBoss && !wasInfectedBySomeone) {
-        g_players[idx].ZMClass = ZM_CLASS_BOSS;
-        EMIT_SOUND(player, CHAN_AUTO, "zpmod/round_start_boss.wav", 1.0, ATTN_NONE);
+        EMIT_SOUND(player, CHAN_AUTO, forceBoss ? "zpmod/round_start_boss.wav"
+                                                : "ambience/the_horror3.wav",
+                   1.0, ATTN_NONE);
     } else {
-        r = RANDOM_LONG(1, 4);
-        if (r == 1) g_players[idx].ZMClass = ZM_CLASS_FAST;
-        else if (r == 2) g_players[idx].ZMClass = ZM_CLASS_TANK;
-        else if (r == 3) g_players[idx].ZMClass = ZM_CLASS_JUMPER;
-        else g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+        int roll = RANDOM_LONG(1, kZMClassRollTotal);
+        int cls = ZM_CLASS_ZOMBIE;
+        for (int i = 0; i < ZM_CLASS_COUNT; i++) {
+            roll -= g_zmClassWeights[i];
+            if (roll <= 0) { cls = i; break; }
+        }
+        g_players[idx].ZMClass = (ZMClasses)cls;
 
-        r = RANDOM_LONG(1, 2);
-        if (r == 1) {
+        // One-shot diagnostic. If this line never appears in the console the
+        // game is not running this server dll at all, which invalidates every
+        // animation theory. Reports the model the client will actually draw and
+        // the real frame counts behind the sequences the server picks.
+        if (pPlayer && pPlayer->pev->model) {
+            int aimSeq = pPlayer->LookupSequence("ref_aim_onehanded");
+            int shooSeq = pPlayer->LookupSequence("ref_shoot_onehanded");
+            static const char* const kIdle[] = {"idle1", "walk", "run", NULL};
+            int idle = pPlayer->LookupFirstUsableSequence(kIdle);
+            static const char* const kSwing[] = {"run", "walk", "idle1", NULL};
+            int swing = pPlayer->LookupFirstUsableSequence(kSwing);
+            ZP_Trace("[anim] idx=%d model=%s\n", idx, STRING(pPlayer->pev->model));
+            ZP_Trace("[anim] idx=%d ref_aim_onehanded=%d ref_shoot_onehanded=%d\n",
+                     idx, aimSeq, shooSeq);
+            ZP_Trace("[anim] idx=%d idle=%d swing=%d seq=%d gait=%d\n",
+                     idx, idle, swing, (int)pPlayer->pev->sequence,
+                     (int)pPlayer->pev->gaitsequence);
+        }
+
+        if (RANDOM_LONG(1, 2) == 1) {
             EMIT_SOUND(player, CHAN_AUTO, "zpmod/coming_1.wav", 1.0, 0.2f);
             EMIT_SOUND(player, CHAN_AUTO, "zpmod/human_death_1.wav", 1.0, ATTN_NORM);
         } else {
@@ -461,22 +844,14 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     // zombie stuff
     pPlayer->pev->deadflag = DEAD_NO;
 
-    float clsHp = 500.0f;
-    switch (g_players[idx].ZMClass) {
-        case ZM_CLASS_FAST:   clsHp = 350.0f; break;
-        case ZM_CLASS_TANK:   clsHp = 900.0f; break;
-        case ZM_CLASS_JUMPER: clsHp = 400.0f; break;
-        case ZM_CLASS_BOSS:   clsHp = 4000.0f; break;
-        default:              clsHp = 500.0f; break;
-    }
-    player->v.health = clsHp;
+    pPlayer->pev->health = ZMClassHealth(g_players[idx].ZMClass);
+    pPlayer->pev->armorvalue = ZMClassArmor(g_players[idx].ZMClass);
+    pPlayer->pev->armortype = 0.5f;   // absorb half damage until depleted
 
     ZPApplyZombieClass(player);
 
     hudtextparms_t params;
     memset(&params, 0, sizeof(params));
-
-    char msg[64] = "The boss has awakened...";
 
     params.channel = 0;
     params.x = -1;
@@ -486,23 +861,17 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     params.fadeinTime = 0.3f;
     params.fadeoutTime = 0.3f;
     params.holdTime = 4.0f;
-    if (g_players[idx].ZMClass == ZM_CLASS_BOSS) UTIL_HudMessageAll(params, msg);
+    if (g_players[idx].ZMClass == ZM_CLASS_BOSS)
+        UTIL_HudMessageAll(params, "The boss has awakened...");
 
-    // class announce to the freshly infected player
+    // class announce to the freshly infected player, tinted per class
+    int rgb = ZMClassColor(g_players[idx].ZMClass);
     char clsMsg[48];
     snprintf(clsMsg, sizeof(clsMsg), "YOU ARE A %s", ZMClassName(g_players[idx].ZMClass));
     params.y = 0.15f;
-    if (g_players[idx].ZMClass == ZM_CLASS_BOSS) {
-        params.r1 = 255; params.g1 = 0; params.b1 = 255;
-    } else if (g_players[idx].ZMClass == ZM_CLASS_TANK) {
-        params.r1 = 255; params.g1 = 140; params.b1 = 20;
-    } else if (g_players[idx].ZMClass == ZM_CLASS_JUMPER) {
-        params.r1 = 80; params.g1 = 255; params.b1 = 70;
-    } else if (g_players[idx].ZMClass == ZM_CLASS_FAST) {
-        params.r1 = 30; params.g1 = 220; params.b1 = 255;
-    } else {
-        params.r1 = 255; params.g1 = 40; params.b1 = 40;
-    }
+    params.r1 = (rgb >> 16) & 0xFF;
+    params.g1 = (rgb >> 8) & 0xFF;
+    params.b1 = rgb & 0xFF;
     UTIL_HudMessage(CBaseEntity::Instance(player), params, clsMsg);
 
     // red infection burst — heavier for the boss
@@ -515,11 +884,36 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     pPlayer->GiveNamedItem("weapon_infectionbomb");
 
     player->v.team = RoleToInt(ROLE_ZOMBIE);
-    /* player->v.viewmodel = MAKE_STRING("models/zpmod/v_claws.mdl");
-    player->v.weaponmodel = iStringNull; */
+    // the claw/bomb viewmodels are class specific and get attached by the
+    // weapons themselves (CCrowbar::Deploy, CWeaponInfectionBomb::ViewModelPath)
     pPlayer->pev->pain_finished = gpGlobals->time;
 
-    ZPSetPlayerModel(player, "zm");
+    ZPSetPlayerModel(player, ZMClassModel(g_players[idx].ZMClass));
+
+    // Diagnostic must run AFTER ZPSetPlayerModel -- before it, pev->model is
+    // still the human's stock player.mdl, which is what an earlier probe here
+    // reported and made it look like the class models were never applied.
+    {
+        CBasePlayer* p = (CBasePlayer*)GET_PRIVATE(player);
+        ZP_Trace("[anim] post-set idx=%d class=%s(%s) model=%s\n", idx,
+                 ZMClassName(g_players[idx].ZMClass),
+                 ZMClassModel(g_players[idx].ZMClass),
+                 p && p->pev->model ? STRING(p->pev->model) : "<null>");
+        if (p) {
+            int mdlIndex = (int)p->pev->model;
+            studiohdr_t* h = (studiohdr_t*)GET_MODEL_PTR(ENT(p->pev));
+            ZP_Trace("[anim] post-set idx=%d modelindex=%d hdr=%p numseq=%d\n",
+                     idx, mdlIndex, (void*)h, h ? h->numseq : -1);
+            ZP_Trace("[anim] post-set idx=%d aim1h=%d shoot1h=%d idle1=%d walk=%d run=%d\n",
+                     idx, p->LookupSequence("ref_aim_onehanded"),
+                     p->LookupSequence("ref_shoot_onehanded"),
+                     p->LookupSequence("idle1"),
+                     p->LookupSequence("walk"),
+                     p->LookupSequence("run"));
+            ZP_Trace("[anim] post-set idx=%d seq=%d gait=%d\n",
+                     idx, (int)p->pev->sequence, (int)p->pev->gaitsequence);
+        }
+    }
 
     // UTIL_Sparks(pPlayer->pev->origin);
     MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pPlayer->pev->origin);
@@ -544,7 +938,7 @@ void ZPMakeHuman(edict_t* ed) {
     int idx = ENTINDEX(ed);
     if (idx < 1 || idx > gpGlobals->maxClients) return;
 
-    g_players[idx].ZMClass = ZM_CLASS_REGULAR;
+    g_players[idx].ZMClass = ZM_CLASS_ZOMBIE;
     g_players[idx].frozenUntil = 0.0f;
     g_players[idx].lastHuman = false;
     g_players[idx].lastInfectKiller = 0;
@@ -669,9 +1063,10 @@ bool ZPDied(edict_t* player, int attackerIndex) {
     }
 
     if (ZPIsZombie(player)) {
-        int r = RANDOM_LONG(1, 2);
-        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/death_1.wav", 1.0, ATTN_NORM);
-        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/death_2.wav", 1.0, ATTN_NORM);
+        int zidx = ENTINDEX(player);
+        EMIT_SOUND(player, CHAN_AUTO,
+                   ZMClassDeathSound(g_players[zidx].ZMClass, RANDOM_LONG(0, 1)),
+                   1.0, ATTN_NORM);
 
         bool headshot = g_players[ENTINDEX(player)].killedByHeadshot;
         g_players[ENTINDEX(player)].killedByHeadshot = false;
@@ -713,10 +1108,39 @@ bool ZPDied(edict_t* player, int attackerIndex) {
 
 void ZPHurt(edict_t* player) {
     if (ZPIsZombie(player)) {
-        int r = RANDOM_LONG(1, 2);
-        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/hurt_1.wav", 1.0, ATTN_NORM);
-        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/hurt_2.wav", 1.0, ATTN_NORM);
+        int idx = ENTINDEX(player);
+        if (idx < 1 || idx > gpGlobals->maxClients) return;
+        EMIT_SOUND(player, CHAN_AUTO, ZMClassHurtSound(g_players[idx].ZMClass, RANDOM_LONG(0, 1)),
+                   1.0, ATTN_NORM);
     }
+}
+
+void ZPSendClawAnim(edict_t* player, int seq)
+{
+    if (!player || !player->v.modelindex)
+        return;
+
+    // Belt and braces against the crash class, not a substitute for the real
+    // fix. The server has no pfnGetModel, so numseq cannot be queried at
+    // runtime -- but every v_claws_*.mdl has exactly 8 sequences (deimos 9), and
+    // a sequence index past the end makes the client read a pseqdesc from beyond
+    // the sequence array and animate off garbage. Clamping here means a bad
+    // table entry can never take the server down again.
+    if (seq < 0 || seq > ZMCLAW_MAX_SEQ)
+    {
+        ZP_Trace("[claw] seq %d out of range, clamped to idle\n", seq);
+        seq = ZMCLAW_IDLE;
+    }
+
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+    if (!pPlayer)
+        return;
+
+    pPlayer->pev->weaponanim = seq;
+    MESSAGE_BEGIN(MSG_ONE, SVC_WEAPONANIM, NULL, player);
+        WRITE_BYTE(seq);
+        WRITE_BYTE(0);
+    MESSAGE_END();
 }
 
 void ZPZombieSwing(edict_t* player)
@@ -727,19 +1151,82 @@ void ZPZombieSwing(edict_t* player)
     if (idx < 1 || idx > gpGlobals->maxClients) return;
     if (g_players[idx].frozenUntil > gpGlobals->time) return;
 
-    // play the claw swing: v_claws.mdl sequences 3-8 are the attack anims,
-    // and the body needs a swing anim too (the crafting crowbar swing is
-    // skipped entirely for zombies, so do it here)
-    static const int kClawAttacks[] = { 3, 4, 5, 6, 7, 8 };
-    int seq = kClawAttacks[g_players[idx].clawSwing % 6];
+    // Play the claw swing. The anim list is per-class only because deimos'
+    // slash1/slash2 are 2-frame stubs and it has to fall back to midslash;
+    // every other class cycles the plain slash pair. See g_kClawAnims2.
+    // The body needs a swing anim too (the crafting crowbar swing is skipped
+    // entirely for zombies, so do it here).
+    int cls = g_players[idx].ZMClass;
+    int animCount = 0;
+    const int* anims = ZMClassClawAnims(cls, &animCount);
+    if (!anims || animCount <= 0) return;
+
+    int seq = anims[g_players[idx].clawSwing % animCount];
     g_players[idx].clawSwing++;
 
-    pPlayer->pev->weaponanim = seq;
-    MESSAGE_BEGIN(MSG_ONE, SVC_WEAPONANIM, NULL, player);
-        WRITE_BYTE(seq);
-        WRITE_BYTE(0);
-    MESSAGE_END();
-    pPlayer->SetAnimation(PLAYER_ATTACK1);
+    ZPSendClawAnim(player, seq);
+
+    // Hold the swing clip for roughly its own length, then let ZPPlayerThink
+    // put the viewmodel back on idle. Without this the viewmodel would snap
+    // back before the swipe is visible.
+    //
+    // The length comes from the class table rather than a header lookup: the
+    // server DLL has no pfnGetModel, and GET_MODEL_PTR(player) would resolve
+    // the body model anyway (129 sequences for necozpmod_zombie against the
+    // viewmodel's 8), so neither can report the viewmodel's clip length.
+    float flLength = 0.5f;
+    const int* frames = ZMClassClawAnimFrames(cls, &animCount);
+    int iSlot = (g_players[idx].clawSwing - 1) % animCount;
+    if (frames && iSlot >= 0 && iSlot < animCount)
+        flLength = (frames[iSlot] > 0 ? frames[iSlot] : 1) / ZMCLAW_VIEW_FPS;
+
+    g_players[idx].nextClawAnim = gpGlobals->time + flLength;
+
+    // Drive the body from the class's attack sequences. Two traps here:
+    //
+    // 1. Do NOT go through SetAnimation(PLAYER_ATTACK1). It resolves through
+    //    m_szAnimExtention to "ref_aim_crowbar"/"ref_shoot_crowbar", which none
+    //    of the necozpmod_* models ship.
+    // 2. Setting pev->sequence on its own is not enough either. PostThink calls
+    //    SetAnimation(PLAYER_IDLE/PLAYER_WALK) every single frame, and its
+    //    ACT_WALK case only leaves pev->sequence alone while m_Activity is
+    //    ACT_RANGE_ATTACK1. Without that, the claw is overwritten on the very
+    //    next frame and never plays a frame at all.
+    //
+    // Verified against the model data: none of the eight models contain a single
+    // sequence named zbs_*, attack or claw, so the per-class bodyClaws lists never
+    // match anything, and "ref_shoot_onehanded" resolves to a two-frame stub that
+    // only moves the root bone -- the model would sit in its raw reference pose for
+    // the whole swing. The only clips these models actually animate are the
+    // locomotion ones, so the swing falls back to "run", the most aggressive
+    // real sequence available, and every candidate is vetted for real frames.
+    const char* const* bodyClaws = ZMClassBodyClaws(cls);
+    int bodySeq = -1;
+    if (bodyClaws && bodyClaws[0]) {
+        int n = 0;
+        while (bodyClaws[n]) n++;
+        const char* const* pick = &bodyClaws[(g_players[idx].clawSwing - 1) % n];
+        bodySeq = pPlayer->LookupFirstUsableSequence(pick);
+        if (bodySeq < 0) {
+            // wrapped to the end of the table: try the remaining entries in order
+            for (int i = 0; i < n && bodySeq < 0; i++) {
+                if (i == (g_players[idx].clawSwing - 1) % n) continue;
+                bodySeq = pPlayer->LookupFirstUsableSequence(&bodyClaws[i]);
+            }
+        }
+    }
+    if (bodySeq < 0) {
+        static const char* const kSwing[] = { "run", "walk", "idle1", NULL };
+        bodySeq = pPlayer->LookupFirstUsableSequence(kSwing);
+    }
+    if (bodySeq < 0)
+        bodySeq = 0;
+
+    pPlayer->m_Activity = ACT_RANGE_ATTACK1;
+    pPlayer->m_IdealActivity = ACT_RANGE_ATTACK1;
+    pPlayer->pev->sequence = bodySeq;
+    pPlayer->pev->frame = 0;
+    pPlayer->ResetSequenceInfo();
 
     TraceResult tr; 
     CBaseEntity* pHit = ZPZombieCheckHit(pPlayer, 70.0f, &tr);
@@ -748,15 +1235,7 @@ void ZPZombieSwing(edict_t* player)
         // ReZombie-style claw: deals melee damage per hit (class-dependent).
         // Armor absorbs part of it; a killing blow from a zombie converts the
         // victim (handled in ZPDied).
-        float dmg = 0.0f;
-        switch (g_players[idx].ZMClass) {
-            case ZM_CLASS_FAST:   dmg = 58.0f; break;
-            case ZM_CLASS_TANK:   dmg = 88.0f; break;
-            case ZM_CLASS_JUMPER: dmg = 55.0f; break;
-            case ZM_CLASS_BOSS:   dmg = 105.0f; break;
-            default:              dmg = 70.0f; break;
-        }
-        dmg *= ZPFeatureClawMultiplier();
+        float dmg = ZPZombieClawDamage(player);
         pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_SLASH);
 
         // splash blood at the wound so a connecting hit reads as a hit
@@ -766,7 +1245,7 @@ void ZPZombieSwing(edict_t* player)
 
         // reward for landing a hit that converted the human
         if (ZPIsZombie(pHit->edict()))
-            pPlayer->pev->health += 100.0f;
+            ZPZombieHeal(player, 100.0f);
 
         // fuckass sounds
         int r = RANDOM_LONG(1, 3);
@@ -869,12 +1348,22 @@ void ZPPlayerAimDisplay(edict_t* player) {
     int hp = (int)ed->v.health;
     if (hp < 0) hp = 0;
 
+    // class max is 2000-5000 now, so a raw HP number is unreadable: show the
+    // percentage of the target's class maximum for zombies and raw HP for
+    // humans, who are always on 100
+    int percent = hp;
     if (ZPIsZombie(ed)) {
-        if (g_players[target].ZMClass == ZM_CLASS_BOSS) {
-            aim.r1 = 255; aim.g1 = 60; aim.b1 = 200;
-        } else {
-            aim.r1 = 255; aim.g1 = 40; aim.b1 = 40;
-        }
+        float maxHp = ZMClassHealth(g_players[target].ZMClass);
+        percent = (maxHp > 0.0f) ? (int)((hp * 100.0f) / maxHp) : 0;
+        if (percent < 0) percent = 0;
+        if (percent > 100) percent = 100;
+    }
+
+    if (ZPIsZombie(ed)) {
+        int rgb = ZMClassColor(g_players[target].ZMClass);
+        aim.r1 = (rgb >> 16) & 0xFF;
+        aim.g1 = (rgb >> 8) & 0xFF;
+        aim.b1 = rgb & 0xFF;
     } else if (ed->v.team == RoleToInt(ROLE_SPECTATOR)) {
         aim.r1 = aim.g1 = aim.b1 = 190;
     } else {
@@ -885,7 +1374,10 @@ void ZPPlayerAimDisplay(edict_t* player) {
     if (!name) name = "player";
 
     char buf[96];
-    snprintf(buf, sizeof(buf), "%s\nHP  %d", name, hp);
+    if (ZPIsZombie(ed))
+        snprintf(buf, sizeof(buf), "%s\nHP  %d%%", name, percent);
+    else
+        snprintf(buf, sizeof(buf), "%s\nHP  %d", name, hp);
     UTIL_HudMessage(CBaseEntity::Instance(player), aim, buf);
 }
 
@@ -985,13 +1477,27 @@ void ZPHUD()
         int hp = (int)pPlayer->pev->health;
         if (hp < 0) hp = 0;
         const char* className = "Human";
-        if (ZPIsZombie(ed)) {
+        bool isZombie = ZPIsZombie(ed);
+        if (isZombie) {
             className = ZMClassName(g_players[i].ZMClass);
         }
         else if (ed->v.team == RoleToInt(ROLE_SPECTATOR)) className = "Spectator";
 
+        // zombies show a percentage of their class maximum; raw HP is in the
+        // thousands and useless at a glance
+        char hpText[16];
+        if (isZombie) {
+            float maxHp = ZMClassHealth(g_players[i].ZMClass);
+            int percent = (maxHp > 0.0f) ? (hp * 100) / (int)maxHp : 0;
+            if (percent < 0) percent = 0;
+            if (percent > 100) percent = 100;
+            snprintf(hpText, sizeof(hpText), "%d%%", percent);
+        } else {
+            snprintf(hpText, sizeof(hpText), "%d", hp);
+        }
+
         char buf[64];
-        snprintf(buf, sizeof(buf), "HP %d  |  %s", hp, className);
+        snprintf(buf, sizeof(buf), "HP %s  |  %s", hpText, className);
 
         hudtextparms_t info;
         memset(&info, 0, sizeof(info));
@@ -1085,52 +1591,40 @@ void ZPRoundStopAmbient() {
     g_round.ambientPlaying = false;
 }
 
-void ZPSetPlayerModel(edict_t* player, const char* modelName)
+// Model indices handed back by PRECACHE_MODEL at load time.
+//
+// Do NOT assign these into pev->v.model. v.model holds a *string* index, not a
+// model index: doing so made STRING(pev->model) return the literal "shot" and
+// GET_MODEL_PTR fall back to player.mdl (numseq=77), which is visible in the
+// debug log. SET_MODEL by path is correct and is what the engine expects.
+int g_zmModelIndex[ZM_CLASS_COUNT] = { 0 };
+int g_zmHumanModelIndex = 0;
+const char* g_zmHumanModel = "";
+
+void ZPSetPlayerModel(edict_t* player, const char* modelName )
 {
     if (!player || player->free || !modelName || !modelName[0])
         return;
 
-    // modelName must be the bare folder name:
-    // "zm" -> models/player/zm/zm.mdl
-    const char* bareModel = modelName;
-
-    // Update the player's model userinfo.
-    // This is the method used by the existing CMultiplayBusters code.
-    char* infoBuffer = g_engfuncs.pfnGetInfoKeyBuffer(player);
-
-    if (infoBuffer)
-    {
-        g_engfuncs.pfnSetClientKeyValue(
-            ENTINDEX(player),
-            infoBuffer,
-            "model",
-            bareModel
-        );
-    }
-
-    // Apply the visible model immediately.
     char modelPath[160];
 
-    if (strcmp(bareModel, "player") == 0)
-    {
-        snprintf(
-            modelPath,
-            sizeof(modelPath),
-            "models/player.mdl"
-        );
-    }
+    if( strcmp( modelName, "player" ) == 0 )
+        snprintf( modelPath, sizeof(modelPath), "models/player.mdl" );
     else
-    {
-        snprintf(
-            modelPath,
-            sizeof(modelPath),
-            "models/player/%s/%s.mdl",
-            bareModel,
-            bareModel
-        );
-    }
+        snprintf( modelPath, sizeof(modelPath), "models/player/%s/%s.mdl", modelName, modelName );
 
-    SET_MODEL(player, modelPath);
+    // Assign by path. This is what pfnSetModel is for and it leaves v.model
+    // holding a valid string index, which the model resolver can turn back into
+    // the right header.
+    SET_MODEL( player, modelPath );
+
+    // Userinfo carries the bare name: that is the form the client uses to
+    // resolve its own copy of the player model.
+    char* infoBuffer = g_engfuncs.pfnGetInfoKeyBuffer( player );
+    if( infoBuffer )
+    {
+        g_engfuncs.pfnSetClientKeyValue( ENTINDEX( player ), infoBuffer, "model", modelName );
+    }
 }
 
 void ZPSendInfection(edict_t* victim, int infectorIndex) {
@@ -1181,8 +1675,17 @@ void ZPKillReward(edict_t* killer, bool fromHeadshot) {
 
     g_players[idx].kills++;
 
-    pPlayer->pev->health += fromHeadshot ? 50.0f : 25.0f;
-    if (pPlayer->pev->health > 200) pPlayer->pev->health = 200;
+    // zombie kills feed the boss's permanent speed ramp
+    ZPZombieOnKilled(killer);
+
+    // the old flat 200 cap is meaningless on classes that run to 5000 HP, so
+    // zombies heal relative to their own class maximum
+    if (ZPIsZombie(killer))
+        ZPZombieHeal(killer, fromHeadshot ? 50.0f : 25.0f);
+    else {
+        pPlayer->pev->health += fromHeadshot ? 50.0f : 25.0f;
+        if (pPlayer->pev->health > 200) pPlayer->pev->health = 200;
+    }
 
     hudtextparms_t params;
     memset(&params, 0, sizeof(params));
@@ -1199,6 +1702,163 @@ void ZPKillReward(edict_t* killer, bool fromHeadshot) {
     UTIL_HudMessage(CBaseEntity::Instance(killer), params, msg);
 }
 
+void ZPRoundResetAbilities(int playerIndex) {
+    if (playerIndex < 0 || playerIndex > 32) return;
+    g_players[playerIndex].abilityCooldown = 0.0f;
+    g_players[playerIndex].rageUntil = 0.0f;
+    g_players[playerIndex].healAuraUntil = 0.0f;
+    g_players[playerIndex].bossRageSpeed = 0.0f;
+    g_players[playerIndex].rageStacks = 0;
+    g_players[playerIndex].nextHealPulse = 0.0f;
+}
+
+// Adds health to a zombie, clamped to their own class maximum. Every heal in
+// the mod has to go through this: the old code capped at a flat 200, which is
+// meaningless now that classes run from 800 to 5000 HP.
+void ZPZombieHeal(edict_t* player, float amount) {
+    if (!ZPIsZombie(player)) return;
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+    if (!pPlayer) return;
+
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+    float maxHp = ZMClassHealth(g_players[idx].ZMClass);
+    pPlayer->pev->health += amount;
+    if (pPlayer->pev->health > maxHp)
+        pPlayer->pev->health = maxHp;
+}
+
+float ZPZombieDamageTaken(edict_t* player) {
+    if (!ZPIsZombie(player)) return 1.0f;
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return 1.0f;
+    return ZMClassDamageTaken(g_players[idx].ZMClass);
+}
+
+// Called from CBasePlayer::TakeDamage when a zombie is hit. Feeds the two
+// passive "get angry when shot" abilities.
+void ZPZombieOnDamaged(edict_t* player, float damage) {
+    if (!ZPIsZombie(player) || damage <= 0.0f) return;
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+    switch (g_players[idx].ZMClass) {
+        case ZM_CLASS_DEIMOS:
+            g_players[idx].rageStacks++;
+            g_players[idx].rageUntil = gpGlobals->time + ZM_DEIMOS_RAGE_TIME;
+            break;
+
+        case ZM_CLASS_BOSS:
+            g_players[idx].rageStacks++;
+            g_players[idx].rageUntil = gpGlobals->time + ZM_RAGE_DURATION;
+            break;
+
+        default:
+            break;
+    }
+}
+
+// Boss kills bank permanent speed for the round.
+void ZPZombieOnKilled(edict_t* player) {
+    if (!ZPIsZombie(player)) return;
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+    if (g_players[idx].ZMClass != ZM_CLASS_BOSS) return;
+    if (g_players[idx].bossRageSpeed >= ZM_BOSS_MAX_SPEED) return;
+
+    g_players[idx].bossRageSpeed += ZM_BOSS_KILL_SPEED;
+    g_players[idx].rageUntil = gpGlobals->time + ZM_RAGE_DURATION;
+    g_players[idx].rageStacks++;
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "BOSS ENRAGED  SPEED +%d", (int)g_players[idx].bossRageSpeed);
+    hudtextparms_t params;
+    memset(&params, 0, sizeof(params));
+    params.channel = 2;
+    params.x = -1;
+    params.y = 0.2f;
+    params.r1 = 255; params.g1 = 0; params.b1 = 40;
+    params.a1 = 255;
+    params.fadeinTime = 0.1f;
+    params.fadeoutTime = 0.5f;
+    params.holdTime = 1.5f;
+    UTIL_HudMessage(CBaseEntity::Instance(player), params, buf);
+}
+
+// current claw damage, including rage, china's speed bonus and round events
+float ZPZombieClawDamage(edict_t* player) {
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return 0.0f;
+
+    int cls = g_players[idx].ZMClass;
+    float dmg = ZMClassClawDamage(cls);
+
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+    if (cls == ZM_CLASS_CHINA && pPlayer) {
+        Vector flat = pPlayer->pev->velocity;
+        flat.z = 0.0f;
+        if (flat.Length() >= ZM_CHINA_MOVE_SPEED)
+            dmg *= ZM_CHINA_MOVE_DAMAGE;
+    }
+
+    if (g_players[idx].rageUntil > gpGlobals->time)
+        dmg *= ZM_RAGE_DAMAGE;
+
+    return dmg * ZPFeatureClawMultiplier();
+}
+
+// healer aura: tops up every zombie in radius while it runs
+static void ZMHealPulse(edict_t* player) {
+    int idx = ENTINDEX(player);
+    if (idx < 1 || idx > gpGlobals->maxClients) return;
+    if (gpGlobals->time < g_players[idx].nextHealPulse) return;
+    g_players[idx].nextHealPulse = gpGlobals->time + ZM_HEAL_INTERVAL;
+
+    for (int i = 1; i <= gpGlobals->maxClients; i++) {
+        edict_t* target = INDEXENT(i);
+        if (!ZPIsZombie(target)) continue;
+        CBasePlayer* pTarget = (CBasePlayer*)GET_PRIVATE(target);
+        if (!pTarget || !pTarget->IsAlive()) continue;
+        if ((pTarget->pev->origin - player->v.origin).Length() > ZM_HEAL_RADIUS) continue;
+
+        ZPZombieHeal(target, ZM_HEAL_PER_TICK);
+
+        MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pTarget->pev->origin);
+            WRITE_BYTE(TE_BLOODSPRITE);
+            WRITE_COORD(pTarget->pev->origin.x);
+            WRITE_COORD(pTarget->pev->origin.y);
+            WRITE_COORD(pTarget->pev->origin.z + 32);
+            WRITE_SHORT(MODEL_INDEX("sprites/blood.spr"));
+            WRITE_SHORT(MODEL_INDEX("sprites/blood.spr"));
+            WRITE_BYTE(120);
+            WRITE_BYTE(90);
+        MESSAGE_END();
+    }
+}
+
+static void ZMTankSlam(edict_t* player) {
+    EMIT_SOUND(player, CHAN_WEAPON, "zombie/claw_strike1.wav", 1.0, ATTN_NORM);
+    EMIT_SOUND(player, CHAN_WEAPON, "debris/bustmetal1.wav", 1.0, ATTN_NORM);
+    UTIL_ScreenShake(player->v.origin, 10.0f, 4.0f, 0.5f, 320.0f);
+
+    float dmg = ZM_SLAM_DAMAGE * ZPFeatureClawMultiplier();
+
+    CBaseEntity* pSelf = CBaseEntity::Instance(player);
+    for (int i = 1; i <= gpGlobals->maxClients; i++) {
+        edict_t* target = INDEXENT(i);
+        if (!ZPIsHuman(target)) continue;
+        CBasePlayer* pTarget = (CBasePlayer*)GET_PRIVATE(target);
+        if (!pTarget || !pTarget->IsAlive()) continue;
+
+        float dist = (pTarget->pev->origin - player->v.origin).Length();
+        if (dist > ZM_SLAM_RADIUS) continue;
+
+        // falloff from full damage at the feet to half at the edge
+        pTarget->TakeDamage(pSelf->pev, pSelf->pev, dmg * (1.0f - 0.5f * dist / ZM_SLAM_RADIUS), DMG_SLASH);
+    }
+}
+
 void ZPPlayerThink(edict_t* player) {
     if (!player) return;
     if (!ZPIsPlayerConnected(player)) return;
@@ -1213,19 +1873,88 @@ void ZPPlayerThink(edict_t* player) {
         int idx = ENTINDEX(player);
         if (idx < 1 || idx > gpGlobals->maxClients) return;
         if (g_players[idx].frozenUntil > gpGlobals->time) return;
-        if (g_players[idx].chargeCooldown > gpGlobals->time) return;
+
+        int cls = g_players[idx].ZMClass;
+
+        // Return the claw viewmodel to idle once its swing has had time to
+        // play. The claws are not a CBasePlayerWeapon -- they are only a
+        // viewmodel driven by hand over SVC_WEAPONANIM -- so there is no
+        // WeaponIdle() and nothing else would ever put the model back. It sat
+        // on the last swing frame indefinitely, which is why the claws looked
+        // frozen between attacks.
+        //
+        // Only while the crowbar is actually held. pev->weaponanim is a single
+        // field shared by every weapon the zombie carries, and the infection
+        // bomb numbers its own 0-3 against its own viewmodel; forcing 0 here
+        // while the bomb was mid-throw yanked it back to idle and cancelled the
+        // cook. The bomb manages its own idle in its ItemPostFrame.
+        //
+        // The restore is guarded on the swing having actually left idle, so
+        // idle is sent once per swing rather than every server frame. The
+        // infectionbomb does not need this: it is a real weapon and its
+        // ItemPostFrame() sends its own idle clip.
+        if (FClassnameIs(pPlayer->pev, "weapon_crowbar") &&
+            pPlayer->pev->weaponanim != ZMCLAW_IDLE &&
+            gpGlobals->time >= g_players[idx].nextClawAnim)
+        {
+            ZPSendClawAnim(player, ZMCLAW_IDLE);
+            g_players[idx].nextClawAnim = gpGlobals->time + 0.25;
+        }
+
+        // the healer's aura keeps pulsing on its own, no button needed
+        if (g_players[idx].healAuraUntil > gpGlobals->time)
+            ZMHealPulse(player);
+
         if (!(pPlayer->m_afButtonPressed & IN_ATTACK2)) return;
+        if (g_players[idx].abilityCooldown > gpGlobals->time) return;
 
         UTIL_MakeVectors(pPlayer->pev->v_angle);
         Vector dir = gpGlobals->v_forward;
-        dir.z = 0;
+        dir.z = 0.0f;
         if (dir.Length() < 0.1f) return;
+        dir = dir.Normalize();
 
-        pPlayer->pev->velocity = dir * 750.0f + Vector(0, 0, 220);
-        g_players[idx].chargeCooldown = gpGlobals->time + 6.0f;
+        // leap height follows the round's gravity event so low-gravity rounds
+        // actually change how far you travel
+        float lift = ZPFeatureGravity();
 
-        EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0, ATTN_NORM);
-        UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
+        switch (ZMClassAbility(cls)) {
+            case ZMABILITY_DASH:
+                pPlayer->pev->velocity = dir * ZM_DASH_SPEED + Vector(0, 0, ZM_DASH_LIFT * lift);
+                g_players[idx].abilityCooldown = gpGlobals->time + ZM_DASH_COOLDOWN;
+                EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0, ATTN_NORM);
+                UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
+                break;
+
+            case ZMABILITY_LEAP:
+                pPlayer->pev->velocity = dir * ZM_LEAP_SPEED + Vector(0, 0, ZM_LEAP_LIFT * lift);
+                g_players[idx].abilityCooldown = gpGlobals->time + ZM_LEAP_COOLDOWN;
+                EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0, ATTN_NORM);
+                break;
+
+            case ZMABILITY_SLAM:
+                ZMTankSlam(player);
+                g_players[idx].abilityCooldown = gpGlobals->time + ZM_SLAM_COOLDOWN;
+                break;
+
+            case ZMABILITY_HEAL:
+                g_players[idx].abilityCooldown = gpGlobals->time + ZM_HEAL_COOLDOWN;
+                g_players[idx].healAuraUntil = gpGlobals->time + ZM_HEAL_DURATION;
+                g_players[idx].nextHealPulse = gpGlobals->time;
+                EMIT_SOUND(player, CHAN_WEAPON, "items/suitcharge1.wav", 1.0, ATTN_NORM);
+                break;
+
+            case ZMABILITY_RAGE:
+                g_players[idx].abilityCooldown = gpGlobals->time + ZM_RAGE_COOLDOWN;
+                g_players[idx].rageUntil = gpGlobals->time + ZM_RAGE_DURATION;
+                g_players[idx].rageStacks++;
+                EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_alert20.wav", 1.0, ATTN_NORM);
+                UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
+                break;
+
+            default:
+                return;    // zombie, deimos, heavy: no right-click ability
+        }
         return;
     }
 
@@ -1636,6 +2365,24 @@ void ZPMapVoteSelect(int playerIndex, int slot) {
 
 cvar_t zpmod_advertisementenabled = { "zpmod_advertisementenabled", "0", FCVAR_SERVER };
 
+// Minimum connected players required before a round will start. The round logic
+// resets every player back to a human whenever the connected count drops below
+// this, and ZPRoundResetPlayer() re-Spawn()s them and restores the stock human
+// model. With the default of 2 that makes single-client testing impossible: the
+// round never leaves prep, so an infected player is torn back down to
+// Helmet.mdl a frame or two after picking a class.
+cvar_t zpmod_min_players = { "zpmod_min_players", "2", FCVAR_SERVER };
+
+int ZPMinPlayers(void) {
+    cvar_t* cvar = CVAR_GET_POINTER("zpmod_min_players");
+    if (!cvar)
+        return 2;
+    int n = (int)cvar->value;
+    if (n < 1)
+        n = 1;
+    return n;
+}
+
 static const char* const kZPAds[] = {
     "^3[zp] ^7don't forget to join our discord: ^4necois.fun/discord",
     "^6[zp] ^7got a suggestion or found a bug? let us know: ^4necois.fun/discord",
@@ -1687,7 +2434,7 @@ void ZPRoundThink(ZPRound* round) {
     // Unconditional so wall markers also track test boxes from zp_supplybox.
     ZPSupplyBoxIconUpdate();
 
-    if (connectedCount < 2) {
+    if (connectedCount < ZPMinPlayers()) {
         if (round->state != RS_PREP || round->countdownStarted) {
             round->state = RS_PREP;
             round->countdownStarted = false;
@@ -2073,6 +2820,17 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/hurt_2.wav");
     PRECACHE_SOUND("zpmod/death_1.wav");
     PRECACHE_SOUND("zpmod/death_2.wav");
+    // per-class voice sets: heavy (boss/heavy) and female (speed)
+    PRECACHE_SOUND("zpmod/hurt_heavy_1.wav");
+    PRECACHE_SOUND("zpmod/hurt_heavy_2.wav");
+    PRECACHE_SOUND("zpmod/death_heavy_1.wav");
+    PRECACHE_SOUND("zpmod/death_heavy_2.wav");
+    PRECACHE_SOUND("zpmod/hurt_female_1.wav");
+    PRECACHE_SOUND("zpmod/hurt_female_2.wav");
+    PRECACHE_SOUND("zpmod/death_female_1.wav");
+    PRECACHE_SOUND("zpmod/death_female_2.wav");
+    PRECACHE_SOUND("zombie/zo_alert20.wav");
+    PRECACHE_SOUND("zombie/zo_attack2.wav");
     PRECACHE_SOUND("ambience/the_horror3.wav");
     PRECACHE_SOUND("items/smallmedkit1.wav");
     PRECACHE_SOUND("items/suitchargeno1.wav");
@@ -2081,10 +2839,36 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("debris/bustmetal2.wav");
     PRECACHE_SOUND("player/heartbeat1.wav");
 
-    PRECACHE_MODEL("models/zpmod/v_claws.mdl");
-    PRECACHE_GENERIC("models/zpmod/v_claws.mdl");
-    PRECACHE_MODEL("models/player/zm/zm.mdl");
+    // Every class model has to be precached: a zombie can roll any of the
+    // eight the moment a round starts, and clients that never precached the
+    // model would show a null/garbage player.
+    for (int cls = 0; cls < ZM_CLASS_COUNT; cls++) {
+        char path[64];
+
+        snprintf(path, sizeof(path), "models/player/%s/%s.mdl",
+                 ZMClassModel(cls), ZMClassModel(cls));
+        g_zmModelIndex[cls] = PRECACHE_MODEL(path);
+        PRECACHE_GENERIC(path);
+
+        const char* claw = ZMClawViewModel(cls);
+        PRECACHE_MODEL(claw);
+        PRECACHE_GENERIC(claw);
+
+        const char* bomb = ZMBombViewModel(cls);
+        PRECACHE_MODEL(bomb);
+        PRECACHE_GENERIC(bomb);
+    }
+
+    // the infection bomb's shared world/player models
+    PRECACHE_MODEL("models/zpmod/p_infectionbomb.mdl");
+    PRECACHE_GENERIC("models/zpmod/p_infectionbomb.mdl");
+    PRECACHE_MODEL("models/zpmod/w_infectionbomb.mdl");
+    PRECACHE_GENERIC("models/zpmod/w_infectionbomb.mdl");
+
+    // humans and spectators still use these
+    g_zmHumanModelIndex = PRECACHE_MODEL("models/player/zm/zm.mdl");
     PRECACHE_GENERIC("models/player/zm/zm.mdl");
+    g_zmHumanModel = "zm";
     PRECACHE_MODEL("models/player/helmet/helmet.mdl");
     PRECACHE_GENERIC("models/player/helmet/helmet.mdl");
     PRECACHE_MODEL("sprites/laserbeam.spr");

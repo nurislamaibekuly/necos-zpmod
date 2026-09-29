@@ -1376,7 +1376,22 @@ int AddToFullPack( struct entity_state_s *state, int e, edict_t *ent, edict_t *h
 	{
 		memcpy( state->basevelocity, ent->v.basevelocity, 3 * sizeof(float) );
 
-		state->weaponmodel	= MODEL_INDEX( STRING( ent->v.weaponmodel ) );
+		// MODEL_INDEX() is pfnModelIndex(), which strcasecmp()s the name it is
+		// given against the precached model table, so a field that is not a live
+		// string offset will kill the server. The stock code here is unguarded,
+		// which is fine as long as weaponmodel always holds a valid string.
+		//
+		// weaponmodel 0 is a legitimate stock state -- weapons.cpp sets it in
+		// Holster/DestroyItem -- and STRING(0) is the base of the engine string
+		// block, so resolving it is harmless and normal. This guard is therefore
+		// belt-and-braces only.
+		//
+		// NOTE: this is not where the reported SIGSEGV came from. It was tried as
+		// the fix and changed nothing; the fault is a strcasecmp on a bad model
+		// name elsewhere. See ZPModelIndexGuarded in zpmod/zpmodelindex.cpp.
+		state->weaponmodel	= 0;
+		if( ent->v.weaponmodel != 0 )
+			state->weaponmodel = MODEL_INDEX( STRING( ent->v.weaponmodel ) );
 		state->gaitsequence	= ent->v.gaitsequence;
 		state->spectator	= ent->v.flags & FL_SPECTATOR;
 		state->friction		= ent->v.friction;
@@ -1803,7 +1818,24 @@ void UpdateClientData( const struct edict_s *ent, int sendweapons, struct client
 	cd->flags		= pev->flags;
 	cd->health		= pev->health;
 
-	cd->viewmodel		= MODEL_INDEX( STRING( pev->viewmodel ) );
+	// Defensive only. MODEL_INDEX() expands to pfnModelIndex(), which walks the
+	// precached model table with strcasecmp() against the name it is handed, so a
+	// field that is not a live string offset will kill the server. The stock code
+	// here is unguarded, which is safe only as long as viewmodel always holds a
+	// valid string; keeping that invariant costs nothing, so check it.
+	//
+	// NOTE: this is not what was actually crashing. The server survived this
+	// guard unchanged and still faulted in strcasecmp_l, so viewmodel was fine
+	// here and the real bad value was weaponmodel in GetEntityState() -- see the
+	// note on that line. Root cause was the hand-assigned viewmodel/weaponmodel
+	// pair in CCrowbar::Deploy, now routed through DefaultDeploy().
+	cd->viewmodel = 0;
+	if( pev->viewmodel != 0 )
+	{
+		const char* szViewModel = STRING( pev->viewmodel );
+		if( szViewModel && szViewModel[0] )
+			cd->viewmodel = MODEL_INDEX( szViewModel );
+	}
 
 	cd->waterlevel		= pev->waterlevel;
 	cd->watertype		= pev->watertype;

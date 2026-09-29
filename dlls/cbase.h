@@ -473,6 +473,14 @@ public:
 	int LookupActivity( int activity );
 	int LookupActivityHeaviest( int activity );
 	int LookupSequence( const char *label );
+	// Returns iSequence only if it actually carries animation frames, else -1.
+	// The necozpmod_* models export most of their GoldSrc weapon poses as
+	// two-frame stubs that leave the model in its raw reference pose, so a
+	// successful LookupSequence is not by itself a usable answer.
+	int VerifySequence( int iSequence );
+	// First name in the NULL-terminated list that resolves to a sequence with
+	// real frames, or -1 if none do.
+	int LookupFirstUsableSequence( const char *const *ppszNames );
 	void ResetSequenceInfo();
 	void DispatchAnimEvents( float flFutureInterval = 0.1 ); // Handle events that have happend since last time called up until X seconds into the future
 	virtual void HandleAnimEvent( MonsterEvent_t *pEvent ) { return; };

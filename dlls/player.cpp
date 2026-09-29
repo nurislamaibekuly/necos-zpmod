@@ -37,6 +37,7 @@
 #include "pm_shared.h"
 #include "hltv.h"
 #include "zpmod/zpmod.h"
+#include "studio.h"
 
 // #define DUCKFIX
 
@@ -463,8 +464,17 @@ int CBasePlayer::TakeDamage( entvars_t *pevInflictor, entvars_t *pevAttacker, fl
 		return 0;
 	}
 
+	// Zombie classes with damage resistance (heavy/tank/china/boss) soak a
+	// fraction of every hit before armor gets a chance at it, so their armor
+	// also lasts longer. Applied here so m_lastDamageAmount below reports the
+	// damage that actually landed.
+	flDamage *= ZPZombieDamageTaken( edict() );
+
 	// keep track of amount of damage last sustained
 	m_lastDamageAmount = (int)flDamage;
+
+	// deimos/boss "get angry when shot" passive
+	ZPZombieOnDamaged( edict(), flDamage );
 
 	// Armor. 
 	if( !( pev->flags & FL_GODMODE ) && pev->armorvalue && !( bitsDamageType & ( DMG_FALL | DMG_DROWN ) ) )// armor doesn't protect against fall or drown damage!
@@ -982,12 +992,274 @@ void CBasePlayer::Killed( entvars_t *pevAttacker, int iGib )
 	pev->nextthink = gpGlobals->time + 0.1f;
 }
 
+// The necozpmod_* zombie models are converted CS/CSO models. Their sequence
+// table is nothing like what the stock HL1 code assumes:
+//   * sequence 0 is "dummy" -- a 2-frame placeholder pose tagged ACT_RESET (0);
+//   * there is no "deep_idle", no "ref_aim_crowbar"/"ref_shoot_crowbar", and no
+//     sequence tagged ACT_CROUCH / ACT_CROUCHIDLE.
+// A sequence that resolves fine can still be useless. The necozpmod_* models are
+// converted CS/CSO models whose GoldSrc weapon-pose sequences were exported as
+// empty placeholders -- in necozpmod_zombie 69 of 129 sequences are two-frame
+// stubs, including every ref_aim_*, ref_shoot_* and crouch_* entry. Stock
+// player.mdl and zm.mdl both carry a real 31-frame ref_aim_onehanded and an
+// 8-frame ref_shoot_onehanded, so this never shows up there.
+//
+// A two-frame stub animates only the root bone, so the model simply stands in its
+// raw reference pose and the legs never move -- the mangled, frozen stance. Worse,
+// there is no claw animation at all: no sequence named zbs_*, attack or claw
+// exists in any of the eight models, so a swing falls through to a 2-frame stub
+// as well. Only the act-tagged locomotion clips (idle1, walk, run, jump,
+// longjump, swim, treadwater, crouch_idle, crouchrun) hold real data, plus the
+// knife/grenade poses. Rejecting stubs by frame count keeps the server off them
+// entirely, and the main menu is unaffected because it hardcodes sequence 1
+// (idle1, a real 121-frame clip).
+static const char* PlayerModelPath( CBasePlayer* pPlayer )
+{
+	return ( pPlayer->pev->model ) ? STRING( pPlayer->pev->model ) : "<null>";
+}
+
+static BOOL PlayerSequenceHasData( CBasePlayer* pPlayer, int iSequence )
+{
+	studiohdr_t *pStudioHeader = (studiohdr_t *)GET_MODEL_PTR( ENT( pPlayer->pev ) );
+	if( !pStudioHeader || iSequence < 0 || iSequence >= pStudioHeader->numseq )
+		return FALSE;
+
+	mstudioseqdesc_t *pSeq = (mstudioseqdesc_t *)( ( byte *)pStudioHeader + pStudioHeader->seqindex );
+	return pSeq[iSequence].numframes > 2;
+}
+
+// The necozpmod_* class models are CS/CSO-derived. Their real claw poses are the
+// grenade-named clips, which carry real animation (ref_aim_grenade is 31 frames,
+// ref_shoot_grenade is 31 frames across 9 blends). Every other "ref_aim_" entry
+// in these models is a 2-frame placeholder, and "ref_aim_" + m_szAnimExtention
+// resolves to one of those, which is why the classes hold a frozen doll pose.
+//
+// The stub lookup *succeeds*, so this cannot be handled by the generic
+// missing-sequence fallback -- it has to be preferred up front.
+static BOOL PlayerIsNecoModel( CBasePlayer* pPlayer )
+{
+	const char* pszModel = PlayerModelPath( pPlayer );
+	return pszModel && !strncmp( pszModel, "models/player/necozpmod_", 24 );
+}
+
+int CBasePlayer::VerifySequence( int iSequence )
+{
+	return PlayerSequenceHasData( this, iSequence ) ? iSequence : -1;
+}
+
+int CBasePlayer::LookupFirstUsableSequence( const char *const *ppszNames )
+{
+	if( !ppszNames )
+		return -1;
+
+	for( int i = 0; ppszNames[i]; i++ )
+	{
+		int seq = LookupSequence( ppszNames[i] );
+		if( seq != -1 && PlayerSequenceHasData( this, seq ) )
+			return seq;
+	}
+	return -1;
+}
+
+// Neither lookup helper can be trusted on these models: LookupActivity returns
+// ACTIVITY_NOT_AVAILABLE (-1) when no sequence carries the activity, and
+// LookupSequence returns -1 on a name miss. Letting that -1 reach pev->sequence
+// or pev->gaitsequence makes the client read a pseqdesc from 176 bytes *before*
+// the sequence table and animate off garbage numframes / fps / blend trees.
+// Stock players always hit the first lookup, so their behaviour is unchanged.
+//
+// The fallback list deliberately only contains locomotion clips that every
+// necozpmod_* model actually implements, so the last resort is still a real
+// animation rather than a stub.
+static int PlayerMissingSequenceFallback( CBasePlayer* pPlayer, BOOL bAttack )
+{
+	static const char* const kAttack[] = { "run", "walk", "idle1" };
+	static const char* const kAim[]    = { "idle1", "walk", "run" };
+	const char* const* list = bAttack ? kAttack : kAim;
+
+	for( int i = 0; i < 3; i++ )
+	{
+		int seq = pPlayer->LookupSequence( list[i] );
+		if( seq != -1 && PlayerSequenceHasData( pPlayer, seq ) )
+			return seq;
+	}
+	return 0;
+}
+
+// Diagnostic helper: label + real frame count for a sequence index, so the
+// debug log shows whether the model is being handed a clip with actual
+// animation in it or a two-frame placeholder.
+//
+// The model path is included because it proved essential: these sequence names
+// are only meaningful against the model that is actually loaded. Reading them
+// through a stale header reports stock player.mdl's table (ref_aim_onehanded at
+// 33 with 31 frames) for a necozpmod model whose 33 is ref_aim_rifle with 2
+// frames, which sent this whole investigation down the wrong path twice.
+const char *ZP_SequenceName( CBasePlayer *pPlayer, int iSequence )
+{
+	static char szBuf[160];
+	studiohdr_t *pStudioHeader = (studiohdr_t *)GET_MODEL_PTR( ENT( pPlayer->pev ) );
+	if( !pStudioHeader || iSequence < 0 || iSequence >= pStudioHeader->numseq )
+		return "<invalid>";
+
+	mstudioseqdesc_t *pSeq = (mstudioseqdesc_t *)( ( byte *)pStudioHeader + pStudioHeader->seqindex );
+	snprintf( szBuf, sizeof(szBuf ), "%s/%df[n%d %s]",
+		pSeq[iSequence].label, pSeq[iSequence].numframes,
+		pStudioHeader->numseq,
+		PlayerModelPath( pPlayer ) );
+	return szBuf;
+}
+
+// The client applies player locomotion as a *gait blend*: it copies rotations
+// out of the walk/run sequence over the top of the base (aim) sequence, but only
+// for bones whose names exactly match a fixed list -- "Bip01", "Bip01 Pelvis",
+// "Bip01 L Leg", "Bip01 L Leg1", "Bip01 L Foot" and the R equivalents
+// (cl_dll/StudioModelRenderer.cpp, legs_bones[]). Matching is an exact strcmp.
+//
+// Stock player.mdl, zm and helmet all use that HL1 naming. The necozpmod_*
+// models name the same joints "Bip01 L Thigh" / "Bip01 L Calf" (verified: 0/39
+// bones match), so the client would match only the root, the pelvis and the two
+// feet -- freezing the legs mid-stride. That blend lives in the client library
+// and cannot be extended for other players' clients, so for these models the
+// server drives locomotion through pev->sequence with gaitsequence left at 0.
+// That is the configuration the main menu uses, which renders them correctly.
+// True when this model carries the stock/HL1 "Bip01 L Leg1" / "R Leg1" bones.
+//
+// NOTE: this reads the header through GET_MODEL_PTR, and the runtime log showed
+// that pointer coming back as stock player.mdl for a player whose pev->model was
+// already a necozpmod path. The bone scan would then have been reading
+// player.mdl's 50 bones and answering for the wrong skeleton. The model path is
+// therefore also checked, so the answer is driven by what is actually loaded even
+// if the cached header lags.
+static BOOL PlayerGaitBlendApplies( CBasePlayer* pPlayer )
+{
+	const char* pszModel = PlayerModelPath( pPlayer );
+	if( pszModel && !strncmp( pszModel, "models/player/necozpmod_", 24 ) )
+		return FALSE;
+
+	// pfnGetModelPtr resolves through v.modelindex, NOT v.model. SV_SetModel
+	// writes both fields together, so a model can be swapped by anything that
+	// calls SET_MODEL afterwards -- ZPRoundResetPlayer and the respawn paths both
+	// do -- while the path still says otherwise. Trust the index.
+	studiohdr_t *pStudioHeader = (studiohdr_t *)GET_MODEL_PTR( ENT( pPlayer->pev ) );
+	if( !pStudioHeader )
+		return TRUE;
+
+	mstudiobone_t *pBones = (mstudiobone_t *)( ( byte *)pStudioHeader + pStudioHeader->boneindex );
+
+	// Any model carrying the HL1 "L Leg" naming can be blended as usual.
+	for( int i = 0; i < pStudioHeader->numbones; i++ )
+	{
+		if( !strcmp( pBones[i].name, "Bip01 L Leg1" ) || !strcmp( pBones[i].name, "Bip01 R Leg1" ) )
+			return TRUE;
+	}
+
+	// No HL1 leg bones: this is a CS/CSO-derived model, so fall back to driving
+	// the whole body with pev->sequence.
+	return FALSE;
+}
+
+static int PlayerMissingSequenceFallbackOld( CBasePlayer* pPlayer, BOOL bAttack )
+{
+	static const char* const kAttack[] = { "run", "walk", "idle1" };
+	static const char* const kAim[]    = { "idle1", "walk", "run" };
+	const char* const* list = bAttack ? kAttack : kAim;
+
+	for( int i = 0; i < 3; i++ )
+	{
+		int seq = pPlayer->LookupSequence( list[i] );
+		if( seq != -1 && PlayerSequenceHasData( pPlayer, seq ) )
+			return seq;
+	}
+	return 0;
+}
+
+// The necozpmod_* models are CS/CSO-derived and ship a dedicated, fully
+// animated zombie clip set prefixed "zbs_" (zbs_idle1/walk/run/jump, the
+// zbs_aim_grenade_*/zbs_shoot_grenade_* claw poses, and zbs_attack*).
+//
+// The generic sequences the engine resolves by activity or by name are the
+// *shared weapon-pose* set instead, and their "ref_aim_*" entries are 2-frame
+// stubs -- a frozen aim pose is what makes these classes look like a doll.
+//
+// So prefer "zbs_<name>", then fall back to the plain name. Anything that fails
+// the real-frame test is reported missing so the caller can chain.
+static int PlayerSeqByName( CBasePlayer* pPlayer, const char* pszName )
+{
+	char szBuf[64];
+	int seq;
+
+	if( !pszName || !pszName[0] )
+		return -1;
+
+	snprintf( szBuf, sizeof(szBuf), "zbs_%s", pszName );
+
+	seq = pPlayer->LookupSequence( szBuf );
+	if( seq != -1 && PlayerSequenceHasData( pPlayer, seq ) )
+		return seq;
+
+	seq = pPlayer->LookupSequence( pszName );
+	if( seq != -1 && PlayerSequenceHasData( pPlayer, seq ) )
+		return seq;
+
+	return -1;
+}
+
+// Resolve a sequence by activity, then by conventional name, then to a real
+// pose. iActivity 0 skips the activity lookup: CBaseAnimating::LookupActivity
+// asserts on ACT_RESET, and 0 would match the "dummy" placeholder on the
+// necozpmod_* models. bAttack picks the swing flavour of the last-resort pose.
+//
+// A hit still gets vetted: on the necozpmod_* models "ref_aim_" + m_szAnimExtention
+// resolves perfectly well to a 2-frame stub, so a successful lookup is not on its
+// own a usable answer. Anything without real frames is pushed on to the fallback.
+static int PlayerSafeSequence( CBasePlayer* pPlayer, int iActivity, const char* pszName, BOOL bAttack )
+{
+	int seq = -1;
+
+	if( iActivity != 0 )
+		seq = pPlayer->LookupActivity( iActivity );
+	if( seq == -1 && pszName )
+		seq = PlayerSeqByName( pPlayer, pszName );
+
+	if( seq != -1 && !PlayerSequenceHasData( pPlayer, seq ) )
+		seq = -1;
+
+	if( seq == -1 )
+		seq = PlayerMissingSequenceFallback( pPlayer, bAttack );
+	if( seq == -1 )
+		seq = 0;
+
+	return seq;
+}
+
+//=========================================================
 // Set the activity based on an event or current state
 void CBasePlayer::SetAnimation( PLAYER_ANIM playerAnim )
 {
 	int animDesired;
 	float speed;
 	char szAnim[64];
+
+	// The model this player's role calls for has to be in place before any
+	// sequence index is chosen, because pfnGetModelPtr reads the header through
+	// v.modelindex and the round-reset/respawn paths re-apply the stock player
+	// model behind our back. Correcting it here means the activity lookups, the
+	// frame-count vetting and the bone scan below all run against the model the
+	// client is actually rendering.
+	//
+	// Only acts when the two have actually diverged; see ZPEnsurePlayerModel.
+	ZPEnsurePlayerModel( edict() );
+
+	// ZPEnsurePlayerModel compares v.model, but the header is resolved from
+	// v.modelindex and CheckPowerups used to reset that unconditionally each
+	// frame. Guard the index as well, so the two agree before anything is
+	// resolved against the header.
+	{
+		CBasePlayer *pMe = this;
+		extern void ZPSyncPlayerModelIndex( edict_t *player );
+		ZPSyncPlayerModelIndex( pMe->edict() );
+	}
 
 	speed = pev->velocity.Length2D();
 
@@ -1052,11 +1324,31 @@ void CBasePlayer::SetAnimation( PLAYER_ANIM playerAnim )
 	case ACT_HOP:
 	case ACT_DIESIMPLE:
 	default:
+		{
+		const char* pszAirAnim = NULL;
+
 		if( m_Activity == m_IdealActivity )
 			return;
 		m_Activity = m_IdealActivity;
 
-		animDesired = LookupActivity( m_Activity );
+		// Resolve by name, not by activity.
+		// The necozpmod_* models set their activity numbers for the locomotion
+		// clips but ship no sequence at all for ACT_FALL(9), ACT_LAND(10) or
+		// ACT_HOVER(5), so those resolve to ACTIVITY_NOT_AVAILABLE and used to
+		// fall through to the idle fallback -- which is what made an airborne
+		// player play "swim". HOP/LEAP/SWIM do have sequences, but going
+		// through the zbs_ set keeps the jump on the real zbs_jump clip.
+		switch( m_IdealActivity )
+		{
+		case ACT_HOP:    pszAirAnim = "jump";     break;
+		case ACT_LEAP:   pszAirAnim = "longjump"; break;
+		case ACT_SWIM:   pszAirAnim = "swim";     break;
+		case ACT_HOVER:  pszAirAnim = "swim";     break;
+		}
+
+		animDesired = PlayerSeqByName( this, pszAirAnim );
+		if( animDesired == -1 )
+			animDesired = PlayerSafeSequence( this, m_Activity, NULL, FALSE );
 
 		// Already using the desired animation?
 		if( pev->sequence == animDesired )
@@ -1067,6 +1359,7 @@ void CBasePlayer::SetAnimation( PLAYER_ANIM playerAnim )
 		pev->frame = 0;
 		ResetSequenceInfo();
 		return;
+		}
 	case ACT_RANGE_ATTACK1:
 		if( FBitSet( pev->flags, FL_DUCKING ) )	// crouching
 			strcpy( szAnim, "crouch_shoot_" );
@@ -1074,8 +1367,29 @@ void CBasePlayer::SetAnimation( PLAYER_ANIM playerAnim )
 			strcpy( szAnim, "ref_shoot_" );
 		strcat( szAnim, m_szAnimExtention );
 		animDesired = LookupSequence( szAnim );
+		if( animDesired == -1 || !PlayerSequenceHasData( this, animDesired ) )
+		{
+		}
+
+		// Prefer the real claw clip over the 2-frame "ref_shoot_<weapon>" stub.
+		// zbs_shoot_grenade_* first if the model has that set, then the plain
+		// grenade pose which every one of these models carries.
+		if( animDesired == -1 || !PlayerSequenceHasData( this, animDesired ) )
+		{
+			static const char* const kShoot[] = {
+				"shoot_grenade_idle1", "shoot_grenade_walk", "shoot_grenade_run",
+				"shoot_grenade"
+			};
+			animDesired = -1;
+			for( int i = 0; i < 4; i++ )
+			{
+				animDesired = PlayerSeqByName( this, kShoot[i] );
+				if( animDesired != -1 )
+					break;
+			}
+		}
 		if( animDesired == -1 )
-			animDesired = 0;
+			animDesired = PlayerMissingSequenceFallback( this, TRUE );
 
 		if( pev->sequence != animDesired || !m_fSequenceLoops )
 		{
@@ -1101,8 +1415,25 @@ void CBasePlayer::SetAnimation( PLAYER_ANIM playerAnim )
 				strcpy( szAnim, "ref_aim_" );
 			strcat( szAnim, m_szAnimExtention );
 			animDesired = LookupSequence( szAnim );
+			if( animDesired == -1 || !PlayerSequenceHasData( this, animDesired ) )
+			{
+				// Prefer the real claw clip over the 2-frame "ref_aim_<weapon>" stub.
+				// zbs_aim_grenade_* where the model has that set, then the plain
+				// grenade pose every one of these models carries.
+				static const char* const kAim[] = {
+					"aim_grenade_idle1", "aim_grenade_walk", "aim_grenade_run",
+					"aim_grenade"
+				};
+				animDesired = -1;
+				for( int i = 0; i < 4; i++ )
+				{
+					animDesired = PlayerSeqByName( this, kAim[i] );
+					if( animDesired != -1 )
+						break;
+				}
+			}
 			if( animDesired == -1 )
-				animDesired = 0;
+				animDesired = PlayerMissingSequenceFallback( this, FALSE );
 			m_Activity = ACT_WALK;
 		}
 		else
@@ -1111,30 +1442,55 @@ void CBasePlayer::SetAnimation( PLAYER_ANIM playerAnim )
 		}
 	}
 
+	// Pick the locomotion sequence for this frame.
+	int locSeq;
+
 	if( FBitSet( pev->flags, FL_DUCKING ) )
 	{
 		if( speed == 0 )
 		{
-			pev->gaitsequence = LookupActivity( ACT_CROUCHIDLE );
+			locSeq = PlayerSafeSequence( this, ACT_CROUCHIDLE, "crouch_idle", FALSE );
 			// pev->gaitsequence = LookupActivity( ACT_CROUCH );
 		}
 		else
 		{
-			pev->gaitsequence = LookupActivity( ACT_CROUCH );
+			locSeq = PlayerSafeSequence( this, ACT_CROUCH, "crouchrun", FALSE );
 		}
 	}
 	else if( speed > 220 )
 	{
-		pev->gaitsequence = LookupActivity( ACT_RUN );
+		locSeq = PlayerSafeSequence( this, ACT_RUN, "run", FALSE );
 	}
 	else if( speed > 0 )
 	{
-		pev->gaitsequence = LookupActivity( ACT_WALK );
+		locSeq = PlayerSafeSequence( this, ACT_WALK, "walk", FALSE );
 	}
 	else
 	{
 		// pev->gaitsequence = LookupActivity( ACT_WALK );
-		pev->gaitsequence = LookupSequence( "deep_idle" );
+		// iActivity 0 skips the activity lookup, as this case always has.
+		locSeq = PlayerSafeSequence( this, 0, "deep_idle", FALSE );
+	}
+
+	if( PlayerGaitBlendApplies( this ) )
+	{
+		// Stock models: the client blends this over the base sequence, so it
+		// goes in gaitsequence and animDesired stays the aim pose.
+		pev->gaitsequence = locSeq;
+	}
+	else
+	{
+		// CS/CSO-derived models (the necozpmod_* zombies): the client's gait
+		// blend only matches HL1 leg bone names, which these models do not
+		// have, so a gaitsequence would freeze the legs mid-stride. Drive the
+		// body with pev->sequence instead and leave gait off -- the same setup
+		// the main menu uses, which renders these models correctly.
+		pev->gaitsequence = 0;
+
+		// While clawing, keep the attack sequence chosen above rather than
+		// overwriting it with the locomotion sequence every frame.
+		if( m_Activity != ACT_RANGE_ATTACK1 )
+			animDesired = locSeq;
 	}
 
 	// Already using the desired animation?
@@ -1143,6 +1499,13 @@ void CBasePlayer::SetAnimation( PLAYER_ANIM playerAnim )
 
 	//ALERT( at_console, "Set animation to %d\n", animDesired );
 	// Reset to first frame of desired animation
+	{
+		extern void ZP_Trace( const char *fmt, ... );
+		extern const char *ZP_SequenceName( CBasePlayer *p, int seq );
+		ZP_Trace( "[seq] ent=%d act=%d loc=%d base=%d->%d (%s) frames=%d speed=%.0f\n",
+			this->entindex(), m_Activity, locSeq, (int)pev->sequence, animDesired,
+			ZP_SequenceName( this, animDesired ), pev->frame, speed );
+	}
 	pev->sequence = animDesired;
 	pev->frame = 0;
 	ResetSequenceInfo();
@@ -2499,7 +2862,33 @@ static void CheckPowerups( entvars_t *pev )
 	if( pev->health <= 0 )
 		return;
 
-	pev->modelindex = g_ulModelIndexPlayer;    // don't use eyes
+	// "don't use eyes": the player entity must never render the player.mdl eye
+	// model, so the stock index is forced back here every frame.
+	//
+	// This has to stay unconditional for humans, and that is load-bearing rather
+	// than legacy cruft. A human may be running a custom model, but the server
+	// still numbers its sequences against player.mdl and the client remaps them
+	// onto whatever it loaded. Letting a human's modelindex follow v.model made
+	// SetAnimation resolve indices against the custom model's own sequence
+	// table, which broke stock walk/run/idle entirely.
+	//
+	// Zombies are the one exception: the necozpmod_* models are selected by path
+	// and their sequences have to be resolved against the real header, because
+	// pfnGetModelPtr reads the header through v.modelindex. Forcing the stock
+	// index on them is what produced the n151-then-n77 flip in the debug log --
+	// the header reverted to player.mdl every frame while v.model still named
+	// the class model, so server-side lookups and client-side rendering
+	// disagreed. Modelindex 0 is also a null model to Mod_Handle, so never let
+	// a zombie sit on an unresolved index either.
+	if( ZPIsZombie( ENT( pev ) ) )
+	{
+		int iWant = pev->model ? MODEL_INDEX( STRING( pev->model ) ) : 0;
+
+		if( iWant != 0 && pev->modelindex == iWant )
+			return;
+	}
+
+	pev->modelindex = g_ulModelIndexPlayer;
 }
 
 //=========================================================
@@ -2983,7 +3372,7 @@ void CBasePlayer::Spawn( void )
 
 	SET_MODEL( ENT( pev ), "models/player.mdl" );
 	g_ulModelIndexPlayer = pev->modelindex;
-	pev->sequence = LookupActivity( ACT_IDLE );
+	pev->sequence = PlayerSafeSequence( this, ACT_IDLE, "idle1", FALSE );
 
 	if( FBitSet( pev->flags, FL_DUCKING ) ) 
 		UTIL_SetSize( pev, VEC_DUCK_HULL_MIN, VEC_DUCK_HULL_MAX );
