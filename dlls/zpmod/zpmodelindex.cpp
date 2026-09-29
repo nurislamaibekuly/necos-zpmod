@@ -12,11 +12,14 @@
 #include "enginecallback.h"
 #include "eiface.h"
 
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
+
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 
 #define ZP_IDX_LOG "/tmp/zpmod_idx.log"
 
@@ -30,6 +33,12 @@ static bool ZPRegionIsReadable( const void *p, size_t need )
 	if( !p )
 		return false;
 
+	const uintptr_t lo = (uintptr_t)p;
+	const uintptr_t hi = lo + need;
+	if( hi < lo ) // overflow
+		return false;
+
+#ifdef __APPLE__
 	mach_vm_address_t addr = (mach_vm_address_t)p;
 	mach_vm_size_t size = 0;
 	vm_region_basic_info_data_64_t info;
@@ -51,6 +60,30 @@ static bool ZPRegionIsReadable( const void *p, size_t need )
 		return false;
 
 	return ( info.protection & VM_PROT_READ ) != 0;
+#else
+	// Linux: scan /proc/self/maps for a read-permission mapping covering the
+	// whole [p, p+need) window.
+	FILE *fp = fopen( "/proc/self/maps", "r" );
+	if( !fp )
+		return false;
+
+	char line[512];
+	bool ok = false;
+	while( fgets( line, sizeof(line), fp ) )
+	{
+		unsigned long a, b;
+		char perms[8];
+		if( sscanf( line, "%lx-%lx %7s", &a, &b, perms ) != 3 )
+			continue;
+		if( lo >= a && hi <= b && perms[0] == 'r' )
+		{
+			ok = true;
+			break;
+		}
+	}
+	fclose( fp );
+	return ok;
+#endif
 }
 
 // Append-only, unbuffered and fsync'd. We only ever write here when something is
