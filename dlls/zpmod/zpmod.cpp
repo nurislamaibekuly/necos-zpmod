@@ -166,8 +166,8 @@ static const ZMClassDef g_zmClasses[ZM_CLASS_COUNT] = {
       g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClaws3 },
 
     { "DEIMOS",  "deimos",  "necozpmod_deimos", 2000, 200, 300, 0.72f,  70, 1.00f, ZMABILITY_NONE,  0xB020F0,
-      { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
-      { "zpmod/death_1.wav", "zpmod/death_2.wav" },
+      { "zpmod/hurt_heavy_1.wav", "zpmod/hurt_heavy_2.wav" },
+      { "zpmod/death_heavy_1.wav", "zpmod/death_heavy_2.wav" },
       g_kClawAnimsDeimos, 2, g_kClawFramesDeimos, g_kBodyClaws3 },
 
     { "HEALER",  "heal",    "necozpmod_heal",   2000, 200, 290, 0.83f,  70, 1.00f, ZMABILITY_HEAL,  0x30FF60,
@@ -285,6 +285,19 @@ const char* const* ZMClassBodyClaws(int cls) {
 #define ZM_LEAP_SPEED      800.0f
 #define ZM_LEAP_LIFT       420.0f
 #define ZM_LEAP_COOLDOWN   7.0f
+
+// Fallback lunge for the three classes with no named ability (zombie, deimos,
+// heavy). Before the class split every zombie lunged on right-click from
+// ZPPlayerThink; the per-class ability switch replaced that wholesale, and
+// ZMABILITY_NONE fell through to a bare claw swing with no forward movement.
+// Restored here as the default so right-click still lunges for them.
+//
+// Values are the original charge verbatim (750 forward, 220 up, 6s cooldown).
+// Note this is deliberately not scaled by ZPFeatureGravity() the way dash and
+// leap are, so the feel matches what these classes had before.
+#define ZM_LUNGE_SPEED     750.0f
+#define ZM_LUNGE_LIFT      220.0f
+#define ZM_LUNGE_COOLDOWN  6.0f
 
 #define ZM_HEAL_DURATION   6.0f
 #define ZM_HEAL_RADIUS     160.0f
@@ -1953,7 +1966,16 @@ void ZPPlayerThink(edict_t* player) {
                 break;
 
             default:
-                return;    // zombie, deimos, heavy: no right-click ability
+                // zombie, deimos and heavy have no named ability, but they
+                // still lunge on right-click. This used to be unconditional for
+                // every zombie; when the per-class switch landed these three
+                // were left with a bare claw swing that never moved the player
+                // forward. Keep the original lunge as the fallback.
+                pPlayer->pev->velocity = dir * ZM_LUNGE_SPEED + Vector(0, 0, ZM_LUNGE_LIFT);
+                g_players[idx].abilityCooldown = gpGlobals->time + ZM_LUNGE_COOLDOWN;
+                EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0f, ATTN_NORM);
+                UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
+                break;
         }
         return;
     }
