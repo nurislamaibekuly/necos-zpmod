@@ -48,6 +48,16 @@ static void ZPAdminMsg(edict_t* to, const char* text) {
     MESSAGE_END();
 }
 
+// server-side announcement to every client; no player is speaking, so the
+// speaker index is 0 and the client just prints the text as-is
+static void ZPAdminSayAll(const char* text) {
+    if (!text || !text[0]) return;
+    MESSAGE_BEGIN(MSG_ALL, gmsgSayText, NULL);
+        WRITE_BYTE(0);
+        WRITE_STRING(text);
+    MESSAGE_END();
+}
+
 // loads the name allowlist: admins listed here don't need a password
 static void ZPAdminLoadAllowList(void) {
     g_allowCount = 0;
@@ -197,12 +207,72 @@ bool ZPAdminCheckBan(const char* name, const char* address, char reason[128]) {
     return banned;
 }
 
+// "zp_say <message>" - admin broadcast, for the server console and RCON.
+//
+// The engine's own "say" console command only exists on a dedicated server
+// (sv_cmds.c registers it under Host_IsDedicated()), so on a listen server
+// "say" is an unknown command and rcon silently does nothing. This one always
+// exists, because the DLL registers it with pfnAddServerCommand, which lands in
+// the same Cmd_AddCommand table SV_RemoteCommand dispatches rcon input through.
+//
+//   rcon <password> zp_say <message>
+//
+// Authentication is the engine's job (rcon_password); this does not re-check it.
+static void ZPAdminSayCommand(void) {
+    const char* usage = "Usage: zp_say <message>\n";
+
+    if (CMD_ARGC() < 2) {
+        ALERT(at_console, "%s", usage);
+        return;
+    }
+
+    // Rejoin CMD_ARGV(1..) rather than reading CMD_ARGS(). SV_RemoteCommand
+    // rebuilds the rcon command line with every argument wrapped in quotes, so
+    // CMD_ARGS() arrives as:  "Server" "restarting" "in" "5"
+    // CMD_ARGV() hands back the individual unescaped values instead.
+    //
+    // The 192 cap also keeps unvalidated rcon input from overflowing what the
+    // client can buffer.
+    char msg[192];
+    msg[0] = 0;
+
+    for (int i = 1; i < CMD_ARGC(); i++) {
+        const char* arg = CMD_ARGV(i);
+        if (!arg || !arg[0]) continue;
+
+        size_t cur = strlen(msg);
+        size_t argLen = strlen(arg);
+        size_t sep = cur ? 1 : 0;
+
+        if (cur + sep + argLen + 1 >= sizeof(msg)) break;
+
+        if (sep) msg[cur] = ' ';
+        strlcpy(msg + cur + sep, arg, sizeof(msg) - cur - sep);
+    }
+
+    size_t len = strlen(msg);
+    while (len > 0 && (msg[len - 1] == ' ' || msg[len - 1] == '\t')) msg[--len] = 0;
+
+    if (len == 0) {
+        ALERT(at_console, "%s", usage);
+        return;
+    }
+
+    char out[224];
+    snprintf(out, sizeof(out), "^1[Admin]^7 %s", msg);
+
+    ZPAdminSayAll(out);
+    ALERT(at_console, "%s\n", out); // echoes back to the rcon client too
+}
+
 void ZPAdminInit(void) {
     g_allowCount = 0;
     ZPAdminLoadAllowList();
     ZPAdminPruneBans();
     for (int i = 1; i <= gpGlobals->maxClients; i++)
         g_authed[i] = false;
+
+    g_engfuncs.pfnAddServerCommand("zp_say", ZPAdminSayCommand);
 }
 
 // finds a connected player whose name starts with the given fragment
