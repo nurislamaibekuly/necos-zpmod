@@ -2852,15 +2852,12 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/vox/crazy.wav");
 
     // Streak icon textures. Generic resources land in the client resource
-    // list, so anyone missing them pulls the file down before they spawn --
-    // gfx/zpmod is what touch_addbutton actually loads, touch/gfx is the
-    // duplicate set shipped alongside the touch profiles.
+    // list, so anyone missing them downloads the file touch_addbutton loads
+    // before they spawn.
     for (int i = 1; i <= 8; i++) {
         char icon[64];
 
         snprintf(icon, sizeof(icon), "gfx/zpmod/%d_kill.tga", i);
-        PRECACHE_GENERIC(icon);
-        snprintf(icon, sizeof(icon), "touch/gfx/%d_kill.tga", i);
         PRECACHE_GENERIC(icon);
     }
     PRECACHE_SOUND("zpmod/hurt_1.wav");
