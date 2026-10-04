@@ -17,6 +17,9 @@ static float s_blackoutAt = 0.0f;      // when the BLACKOUT event triggers
 static float s_blackoutUntil = 0.0f;   // when the BLACKOUT event ends
 static float s_heartbeatUntil = 0.0f;  // last-human heartbeat cadence
 static const float kPlagueInterval = 20.0f;
+static const float kKillIconHold = 3.0f;        // seconds the streak icon stays solid
+static const float kKillIconFadeSpeed = 2.5f;   // alpha/s, the touch_fade speed argument
+static const float kKillIconRemoveDelay = 1.0f; // seconds between the fade finishing and the icon being hidden
 
 const char* ZPModeName(int mode) {
     switch (mode) {
@@ -61,6 +64,8 @@ void ZPFeatureInit(void) {
     for (int i = 1; i <= gpGlobals->maxClients; i++) {
         g_players[i].steerMode = ZEV_NONE;
         g_players[i].bossRoundStart = false;
+        g_players[i].killIconFadeAt = 0.0f;
+        g_players[i].killIconRemoveAt = 0.0f;
     }
 }
 
@@ -331,6 +336,87 @@ static void ZPStreakHud(edict_t* player, const char* msg, int r, int g, int b) {
     UTIL_HudMessage(CBaseEntity::Instance(player), params, msg);
 }
 
+// announcer clip per streak step, from sound/zpmod/vox/. The 6th clip is
+// spelled cantbelive.wav on disk, and 8+ reuses crazy.wav since there is no
+// ninth line. Streaks past 8 also reuse the 8_kill icon.
+static const char* ZPStreakSound(int streak) {
+    switch (streak) {
+        case 1:  return "zpmod/vox/firstkill.wav";
+        case 2:  return "zpmod/vox/doublekill.wav";
+        case 3:  return "zpmod/vox/triplekill.wav";
+        case 4:  return "zpmod/vox/multikill.wav";
+        case 5:  return "zpmod/vox/incredible.wav";
+        case 6:  return "zpmod/vox/cantbelive.wav";
+        case 7:  return "zpmod/vox/excellent.wav";
+        case 8:  return "zpmod/vox/crazy.wav";
+        default: return (streak < 1) ? "zpmod/vox/firstkill.wav" : "zpmod/vox/crazy.wav";
+    }
+}
+
+// Announcer + streak icon, for the acting player only. Both ride svc_stufftext
+// via CLIENT_COMMAND: "play" is a local client sound, and touch_addbutton
+// replaces an existing button of the same name (fresh texture, alpha back to
+// 255, no hide flag), so re-adding "_kill_icon" every kill both swaps the
+// number and cancels any fade/hide still pending from the previous streak.
+static void ZPAnnounceStreak(edict_t* killer, int streak) {
+    if (!killer) return;
+
+    char cmd[192];
+    snprintf(cmd, sizeof(cmd), "play %s\n", ZPStreakSound(streak));
+    CLIENT_COMMAND(killer, cmd);
+
+    if (streak > 8) streak = 8;
+    snprintf(cmd, sizeof(cmd),
+             "touch_addbutton \"_kill_icon\" \"gfx/zpmod/%d_kill\" \"\" "
+             "0.44 0.194115 0.56 0.333802 255 255 255 255 0\n",
+             streak);
+    CLIENT_COMMAND(killer, cmd);
+
+    g_players[ENTINDEX(killer)].killIconFadeAt = gpGlobals->time + kKillIconHold;
+    g_players[ENTINDEX(killer)].killIconRemoveAt = 0.0f;
+}
+
+// Streak icon lifecycle, checked every frame from ZPRoundThink so it runs even
+// when the round state would gate everything else: solid for kKillIconHold,
+// fading for 1/kKillIconFadeSpeed seconds, then hidden after another
+// kKillIconRemoveDelay seconds.
+//
+// The last step uses touch_hide, not touch_removebutton: the engine registers
+// touch_removebutton as a restricted (CMD_PRIVILEGED) command, and stufftext
+// coming from the server is executed unprivileged, so it would be silently
+// dropped. touch_hide is a plain command and is enough on its own -- the
+// TOUCH_FL_HIDE flag makes the button neither draw nor take touches, and the
+// next touch_addbutton throws the hidden button away and starts fresh.
+void ZPFeatureKillIconThink(void) {
+    char cmd[64];
+
+    for (int i = 1; i <= gpGlobals->maxClients; i++) {
+        edict_t* ed = INDEXENT(i);
+
+        if (g_players[i].killIconFadeAt > 0.0f &&
+            gpGlobals->time >= g_players[i].killIconFadeAt) {
+            g_players[i].killIconFadeAt = 0.0f;
+            g_players[i].killIconRemoveAt = gpGlobals->time +
+                                            (1.0f / kKillIconFadeSpeed) +
+                                            kKillIconRemoveDelay;
+
+            if (ZPIsPlayerConnected(ed)) {
+                snprintf(cmd, sizeof(cmd), "touch_fade _kill_icon -%.1f 0\n",
+                         kKillIconFadeSpeed);
+                CLIENT_COMMAND(ed, cmd);
+            }
+        }
+
+        if (g_players[i].killIconRemoveAt > 0.0f &&
+            gpGlobals->time >= g_players[i].killIconRemoveAt) {
+            g_players[i].killIconRemoveAt = 0.0f;
+
+            if (ZPIsPlayerConnected(ed))
+                CLIENT_COMMAND(ed, "touch_hide \"_kill_icon\"\n");
+        }
+    }
+}
+
 // kill streak: +50 HP at 3, +75 HP + ammo at 5, +125 HP + adr at 10
 void ZPFeatureOnKill(edict_t* killer, bool fromHeadshot) {
     if (!killer) return;
@@ -345,6 +431,8 @@ void ZPFeatureOnKill(edict_t* killer, bool fromHeadshot) {
         g_players[idx].headshots++;
 
     int streak = g_players[idx].killStreak;
+    ZPAnnounceStreak(killer, streak);
+
     if (streak != 3 && streak != 5 && streak != 10) return;
 
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(killer);
@@ -396,14 +484,23 @@ void ZPFeatureOnInfect(edict_t* victim, int infectorIndex) {
     g_players[v].infectStreak = 0;
     g_players[v].roundsSurvived = 0;
 
-    if (infectorIndex >= 1 && infectorIndex <= gpGlobals->maxClients &&
-        ZPIsZombie(INDEXENT(infectorIndex)))
+    edict_t* infector = NULL;
+    if (infectorIndex >= 1 && infectorIndex <= gpGlobals->maxClients)
+        infector = INDEXENT(infectorIndex);
+
+    if (ZPIsZombie(infector)) {
         g_players[infectorIndex].infectStreak++;
 
-    if (g_round.state != RS_ACTIVE || infectorIndex < 1 || infectorIndex > gpGlobals->maxClients)
+        // same announcer + streak icon as a frag streak, counted in
+        // infections instead: ZPAnnounceStreak only needs a live client,
+        // and ZPIsPlayerConnected keeps CLIENT_COMMAND off slot-less edicts
+        if (g_round.state == RS_ACTIVE && ZPIsPlayerConnected(infector))
+            ZPAnnounceStreak(infector, g_players[infectorIndex].infectStreak);
+    }
+
+    if (g_round.state != RS_ACTIVE || !infector)
         return;
 
-    edict_t* infector = INDEXENT(infectorIndex);
     if (!ZPIsPlayerConnected(infector) || !ZPIsZombie(infector))
         return;
 
@@ -512,4 +609,6 @@ void ZPFeaturePlayerDisconnect(edict_t* player) {
 
     g_players[idx].steerMode = ZEV_NONE;
     g_players[idx].bossRoundStart = false;
+    g_players[idx].killIconFadeAt = 0.0f;
+    g_players[idx].killIconRemoveAt = 0.0f;
 }

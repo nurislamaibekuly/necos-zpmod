@@ -2453,6 +2453,9 @@ void ZPRoundThink(ZPRound* round) {
 
     ZPFeatureRoundThink(round);
 
+    // streak icon fade: fires touch_fade once the streak has stalled
+    ZPFeatureKillIconThink();
+
     // Unconditional so wall markers also track test boxes from zp_supplybox.
     ZPSupplyBoxIconUpdate();
 
@@ -2838,6 +2841,28 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/vox/three.wav");
     PRECACHE_SOUND("zpmod/vox/two.wav");
     PRECACHE_SOUND("zpmod/vox/one.wav");
+    // kill announcer, one clip per streak step (see ZPStreakSound)
+    PRECACHE_SOUND("zpmod/vox/firstkill.wav");
+    PRECACHE_SOUND("zpmod/vox/doublekill.wav");
+    PRECACHE_SOUND("zpmod/vox/triplekill.wav");
+    PRECACHE_SOUND("zpmod/vox/multikill.wav");
+    PRECACHE_SOUND("zpmod/vox/incredible.wav");
+    PRECACHE_SOUND("zpmod/vox/cantbelive.wav");
+    PRECACHE_SOUND("zpmod/vox/excellent.wav");
+    PRECACHE_SOUND("zpmod/vox/crazy.wav");
+
+    // Streak icon textures. Generic resources land in the client resource
+    // list, so anyone missing them pulls the file down before they spawn --
+    // gfx/zpmod is what touch_addbutton actually loads, touch/gfx is the
+    // duplicate set shipped alongside the touch profiles.
+    for (int i = 1; i <= 8; i++) {
+        char icon[64];
+
+        snprintf(icon, sizeof(icon), "gfx/zpmod/%d_kill.tga", i);
+        PRECACHE_GENERIC(icon);
+        snprintf(icon, sizeof(icon), "touch/gfx/%d_kill.tga", i);
+        PRECACHE_GENERIC(icon);
+    }
     PRECACHE_SOUND("zpmod/hurt_1.wav");
     PRECACHE_SOUND("zpmod/hurt_2.wav");
     PRECACHE_SOUND("zpmod/death_1.wav");

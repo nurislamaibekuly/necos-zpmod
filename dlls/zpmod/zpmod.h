@@ -141,6 +141,8 @@ struct ZPPlayer {
     bool noclip;
     int steerMode;        // pick a round modifier (see ZPRoundEvent)
     int killStreak;       // consecutive frags this life
+    float killIconFadeAt; // when the streak icon starts fading (0 = nothing up)
+    float killIconRemoveAt; // when the faded icon gets hidden again
     int infectStreak;     // consecutive infections this life
     int deathCount;
     int roundsSurvived;
@@ -193,6 +195,7 @@ float ZPFeatureSpeedMultiplier(void);
 int ZPFeatureInitialArmor(void);
 float ZPFeatureRoundDuration(void);
 void ZPFeatureOnKill(edict_t* killer, bool fromHeadshot);
+void ZPFeatureKillIconThink(void);
 void ZPFeatureOnInfect(edict_t* victim, int infectorIndex);
 void ZPFeatureOnDied(edict_t* player);
 void ZPFeatureLastHuman(edict_t* player);
