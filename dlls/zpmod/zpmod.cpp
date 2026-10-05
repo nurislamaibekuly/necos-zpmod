@@ -474,6 +474,71 @@ bool ZPIsPlayerConnected(edict_t* player) {
     return true;
 }
 
+// svc_lightstyle is [byte style][string pattern] in stock GoldSrc, but Xash's
+// client reads a trailing float (the pattern clock) as well whenever the
+// connection isn't GoldSrc/Quake, so the payload has to match the engine or
+// the stream desyncs. pfnCVarGetPointer only reports cvars the engine really
+// has and rcon_enable is Xash-only, so probing it picks the right format.
+static bool ZPLightstyleWantsFloat(void) {
+    static int cached = -1;
+    if (cached < 0)
+        cached = g_engfuncs.pfnCVarGetPointer("rcon_enable") ? 1 : 0;
+    return cached != 0;
+}
+
+// how often the red vision fade is re-pinned while someone stays infected
+static const float ZP_VISION_REFRESH = 1.0f;
+
+// Pushes one player's infection state to their own client, no client dll
+// involved: lightstyle 0 is driven to "z" (double bright) as a per-client fake
+// fullbright and back to "m" (the map's normal light) once they stop being a
+// zombie, and the red vision rides the engine's own ScreenFade message.
+//
+// The fade is sent with FFADE_STAYOUT so it pins at alpha instead of ramping
+// and dying (alpha 0 puts the screen back). Because every other ScreenFade the
+// mod sends replaces it wholesale -- kill screens, round events, item flashes
+// -- ZPPlayerThink re-asserts it while they stay infected.
+void ZPSyncZombieState(edict_t* player) {
+    if (!ZPIsPlayerConnected(player)) return;
+
+    int idx = ENTINDEX(player);
+    bool zombie = ZPIsZombie(player);
+
+    MESSAGE_BEGIN(MSG_ONE, SVC_LIGHTSTYLE, NULL, player);
+        WRITE_BYTE(0);
+        WRITE_STRING(zombie ? "z" : "m");
+        if (ZPLightstyleWantsFloat()) {
+            // no pfnWriteFloat in the server API, but MSG_WriteLong and
+            // MSG_WriteFloat push the same 32 bits, so the bit pattern of the
+            // float goes out identically. The value only seeds the animation
+            // clock and single-character patterns ignore it.
+            union { float f; int i; } clock;
+            clock.f = 1.0f;
+            WRITE_LONG(clock.i);
+        }
+    MESSAGE_END();
+
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+    if (!pPlayer) return;
+
+    bool inSlot = (idx >= 1 && idx <= gpGlobals->maxClients);
+
+    if (zombie) {
+        // (225, 50, 50) at alpha 110: the screen blends that red over the
+        // world rather than fading to it, so the map stays readable
+        UTIL_ScreenFade(pPlayer, Vector(225, 50, 50), 0.0f, 0.0f, 110, FFADE_STAYOUT);
+        if (inSlot) g_players[idx].visionTinted = true;
+    } else if (inSlot && g_players[idx].visionTinted) {
+        // only clear a tint we actually put up, so a round event's own fade
+        // isn't cancelled for someone who never had the vision
+        UTIL_ScreenFade(pPlayer, g_vecZero, 0.0f, 0.0f, 0, FFADE_STAYOUT);
+        g_players[idx].visionTinted = false;
+    }
+
+    if (inSlot)
+        g_players[idx].nextVisionSync = gpGlobals->time + ZP_VISION_REFRESH;
+}
+
 int ZPCountConnectedPlayers(void) {
     int count = 0;
     for (int i = 1; i <= gpGlobals->maxClients; i++) {
@@ -550,6 +615,8 @@ void ZPRoundResetPlayer(edict_t* ed) {
             resetModel = "helmet";
         ZPSetPlayerModel(ed, resetModel);
     }
+
+    ZPSyncZombieState(ed);
 }
 
 static bool joinInProgress = false;
@@ -600,6 +667,9 @@ void ZPPlayerJoin(edict_t* player) {
             pPlayer->StartObserver(pPlayer->pev->origin, pPlayer->pev->angles);
         }
     }
+
+    // fresh join always starts human, so this clears any stale overlay
+    ZPSyncZombieState(player);
 
     joinInProgress = false;
 }
@@ -941,6 +1011,8 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     MESSAGE_END();
 
     ZPThunderStrike(player);
+
+    ZPSyncZombieState(player);
 }
 
 // admins can revert a zombie back to a human
@@ -988,6 +1060,8 @@ void ZPMakeHuman(edict_t* ed) {
           ENTINDEX(ed), (unsigned int)ed->v.weapons);
 
     UTIL_ScreenFade(pPlayer, Vector(0, 255, 120), 0.4f, 0.2f, 255, FFADE_IN);
+
+    ZPSyncZombieState(ed);
 }
 
 // forces the current round to end with a chosen winner (0 = draw, 1 = humans, 2 = zombies)
@@ -1115,6 +1189,9 @@ bool ZPDied(edict_t* player, int attackerIndex) {
     player->v.team = RoleToInt(ROLE_SPECTATOR);
     pPlayer->pev->health = 0;
     pPlayer->StartObserver(pPlayer->pev->origin, pPlayer->pev->angles);
+
+    // death drops the zombie flag: overlay off, lightstyle back to normal
+    ZPSyncZombieState(player);
 
     return false;
 }
@@ -1885,6 +1962,12 @@ void ZPPlayerThink(edict_t* player) {
 
         int idx = ENTINDEX(player);
         if (idx < 1 || idx > gpGlobals->maxClients) return;
+
+        // anything else that flashes this player's screen throws our red
+        // vision away, so put it back on a slow timer rather than once
+        if (gpGlobals->time >= g_players[idx].nextVisionSync)
+            ZPSyncZombieState(player);
+
         if (g_players[idx].frozenUntil > gpGlobals->time) return;
 
         int cls = g_players[idx].ZMClass;

@@ -161,6 +161,8 @@ struct ZPPlayer {
     float bossRageSpeed;   // boss: permanent +speed earned this round
     int rageStacks;        // deimos/boss: hits taken while raging
     float nextHealPulse;   // heal: next aura tick
+    bool visionTinted;     // red vision fade is up (see ZPSyncZombieState)
+    float nextVisionSync;  // when the vision fade is next re-pinned
 };
 
 extern ZPRound g_round;
@@ -216,6 +218,11 @@ void ZPHUD();
 bool ZPIsPlayerConnected(edict_t* player);
 int ZPCountConnectedPlayers(void);
 bool ZPIsZombie(edict_t* player);
+
+// Pushes one player's infection state to their own client: lightstyle 0 as a
+// per-client fake fullbright, plus the red vision screenfade while infected.
+// Called on every role change and re-asserted from ZPPlayerThink.
+void ZPSyncZombieState(edict_t* player);
 
 // Re-applies the model a player's current role requires, if v.modelindex does
 // not already point at it. Returns TRUE if the model was changed.
