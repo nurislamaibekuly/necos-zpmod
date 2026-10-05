@@ -20,7 +20,7 @@ extern int gmsgSayText;
 // - ban list via zpmod_bans.ini (lines: <lowername>\t<ip>\t<expiry-unix>)
 // - all commands through chat: "!cmd args" or "/cmd args"
 
-cvar_t zp_admin_pass = { "zp_admin_pass", "", FCVAR_SERVER };
+cvar_t zp_admin_pass = { "zp_admin_pass", "", FCVAR_SERVER | FCVAR_PROTECTED };
 
 #define ZPADMIN_BAN_FILE "zpmod_bans.ini"
 #define ZPADMIN_ADMIN_FILE "zpmod_admins.ini"
