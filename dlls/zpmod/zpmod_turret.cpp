@@ -181,8 +181,7 @@ void CWeaponTurretKit::PrimaryAttack( void )
 		edict_t *ed = INDEXENT( i );
 		if( !ed || ed->free )
 			continue;
-		const char *cls = STRING( ed->v.classname );
-		if( cls && !strcmp( cls, "zp_turret" ) && ed->v.owner == m_pPlayer->edict() )
+		if( ZPTurretBuilder( ed ) == m_pPlayer->edict() )
 			live++;
 	}
 	if( live >= TURRET_KIT_MAX_ACTIVE )

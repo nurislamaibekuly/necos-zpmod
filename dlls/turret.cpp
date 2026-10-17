@@ -1346,6 +1346,13 @@ void CZPTurret::Spawn( void )
 	m_hEnemy = NULL;
 
 	m_hBuilder = pev->owner ? CBaseEntity::Instance( pev->owner ) : NULL;
+
+	// tracelines don't hit PEV->OWNER (see tripmine.cpp/ggrenade.cpp): with
+	// the owner left set, the builder's own crosshair trace passed straight
+	// through their turret, so the aim HUD never saw it. Everything that
+	// needs the builder reads m_hBuilder / ZPTurretBuilder() instead.
+	pev->owner = NULL;
+
 	m_flBuildDone = gpGlobals->time + ZP_TURRET_BUILD_TIME;
 
 	// CSentry::Spawn just registered Initialize + TurretUse; either one could
@@ -1462,4 +1469,17 @@ void CZPTurret::Shoot( Vector &vecSrc, Vector &vecDirToEnemy )
 		break;
 	}
 	pev->effects = pev->effects | EF_MUZZLEFLASH;
+}
+
+edict_t *ZPTurretBuilder( edict_t *pTurret )
+{
+	if( !pTurret || pTurret->free )
+		return NULL;
+
+	CBaseEntity *pEnt = CBaseEntity::Instance( pTurret );
+	if( !pEnt || !FClassnameIs( pEnt->pev, "zp_turret" ) )
+		return NULL;
+
+	CBaseEntity *pBuilder = ( (CZPTurret *)pEnt )->m_hBuilder;
+	return pBuilder ? pBuilder->edict() : NULL;
 }

@@ -1469,14 +1469,13 @@ void ZPPlayerAimDisplay(edict_t* player) {
         // hologram build vs armed
         bool building = (pTurretAim->pev->takedamage == DAMAGE_NO);
 
-        // builder name from owner (set at Create)
+        // builder name (pev->owner is cleared at Spawn so the builder's own
+        // trace can hit the turret -- see turret.cpp; m_hBuilder keeps it)
         const char* builder = "?";
-        if (pTurretAim->pev->owner) {
-            edict_t* own = pTurretAim->pev->owner;
-            if (own && !own->free) {
-                const char* n = STRING(own->v.netname);
-                if (n && n[0]) builder = n;
-            }
+        edict_t* own = ZPTurretBuilder(pTurretAim->edict());
+        if (own) {
+            const char* n = STRING(own->v.netname);
+            if (n && n[0]) builder = n;
         }
 
         // orange while building, health-colored once online

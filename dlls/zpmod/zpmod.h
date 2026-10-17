@@ -182,6 +182,7 @@ void ZPSupplyBoxIconUpdate(void);
 void ZPSupplyBoxCommand(void);
 void ZPSupplyBoxClearCommand(void);
 void ZPCleanupWorld(void);
+edict_t* ZPTurretBuilder(edict_t* pTurret);
 void ZPRoundThink(ZPRound* round);
 void ZPRoundRestart(void);
 void ZPFeatureInit(void);
