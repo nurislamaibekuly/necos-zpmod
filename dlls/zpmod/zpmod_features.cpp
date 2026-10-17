@@ -4,6 +4,7 @@
 #include "enginecallback.h"
 #include "game.h"
 #include "edict.h"
+#include "weapons.h"
 #include "zpmod.h"
 #include "player.h"
 #include "shake.h"
@@ -55,7 +56,6 @@ void ZPFeatureInit(void) {
     g_round.suddenDeathUntil = 0.0f;
     g_round.plagueNextInfectTime = false;
     g_round.plagueNextSpread = 0.0f;
-    g_round.lastHumanMusicUntil = 0.0f;
     g_round.bossRound = false;
 
     s_blackoutAt = 0.0f;
@@ -99,7 +99,6 @@ void ZPFeaturePreRound(ZPRound* round) {
     round->suddenDeathUntil = 0.0f;
     round->plagueNextInfectTime = false;
     round->plagueNextSpread = gpGlobals->time + kPlagueInterval;
-    round->lastHumanMusicUntil = 0.0f;
     round->roundDuration = ZPFeatureRoundDuration();
 
     s_blackoutAt = 0.0f;
@@ -510,13 +509,15 @@ void ZPFeatureOnInfect(edict_t* victim, int infectorIndex) {
     float hp = (streak == 3) ? 150.0f : 300.0f;
     infector->v.health += hp;
 
-    const char* sfx = (streak == 5) ? "zpmod/round_start_boss.wav" : "zpmod/round_start.wav";
+    // round_start.wav plays on the round countdown only now; the x5 streak
+    // keeps its own boss track, x3 is HUD + HP only
     const char* tag = (streak == 5) ? "INFECT STREAK x5  +300 HP" : "INFECT STREAK x3  +150 HP";
     int r = (streak == 5) ? 255 : 255;
     int g = (streak == 5) ? 215 : 90;
     int b = (streak == 5) ? 0 : 90;
 
-    EMIT_SOUND(infector, CHAN_ITEM, sfx, 1.0, ATTN_NORM);
+    if (streak == 5)
+        EMIT_SOUND(infector, CHAN_ITEM, "zpmod/round_start_boss.wav", 1.0, ATTN_NORM);
     ZPStreakHud(infector, tag, r, g, b);
 }
 
@@ -552,17 +553,11 @@ void ZPFeatureLastHuman(edict_t* player) {
     // adrenaline: speed surge on top of the built-in last-human speed
     g_players[idx].adrenalineUntil = gpGlobals->time + 8.0f;
 
-    // weapon: upgrade to the assault rifle so the last stand can actually shoot
-    pPlayer->GiveNamedItem("weapon_9mmAR");
-    pPlayer->GiveNamedItem("ammo_9mmclip");
-    pPlayer->GiveNamedItem("ammo_9mmclip");
-    pPlayer->SelectItem("weapon_9mmAR");
-
-    // music sting (one burst per round)
-    if (g_round.lastHumanMusicUntil < gpGlobals->time) {
-        g_round.lastHumanMusicUntil = gpGlobals->time + 45.0f;
-        EMIT_SOUND(player, CHAN_AUTO, "zpmod/round_start.wav", 1.0, ATTN_NORM);
-    }
+    // weapon: egon with a full tank of uranium so the last stand can
+    // actually shoot
+    pPlayer->GiveNamedItem("weapon_egon");
+    pPlayer->GiveAmmo(URANIUM_MAX_CARRY, "uranium", URANIUM_MAX_CARRY);
+    pPlayer->SelectItem("weapon_egon");
 
     // screen FX: golden flash + last-stand aura so everyone can spot the survivor
     UTIL_ScreenFade(pPlayer, Vector(255, 215, 0), 0.3f, 0.2f, 255, FFADE_IN);

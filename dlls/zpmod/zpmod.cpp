@@ -1760,7 +1760,6 @@ void ZPRoundInit(ZPRound* round) {
     round->suddenDeathUntil = 0.0f;
     round->plagueNextInfectTime = false;
     round->plagueNextSpread = 0.0f;
-    round->lastHumanMusicUntil = 0.0f;
     round->bossRound = false;
     round->ambientPlaying = false;
 }

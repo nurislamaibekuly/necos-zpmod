@@ -87,7 +87,6 @@ struct ZPRound {
     float suddenDeathUntil;
     bool plagueNextInfectTime;
     float plagueNextSpread;
-    float lastHumanMusicUntil;
     bool bossRound;
     bool ambientPlaying;
 };
