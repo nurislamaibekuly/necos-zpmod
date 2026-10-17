@@ -1334,12 +1334,13 @@ void CZPTurret::Spawn( void )
 	pev->classname = MAKE_STRING( "zp_turret" );
 	pev->health = ZP_TURRET_HEALTH;
 
-	// hologram stage: visible and solid, but untouchable and inert
+	// hologram stage: visible but walk-through, untouchable and inert
 	pev->rendermode = kRenderTransAdd;
 	pev->renderamt = 200;
 	pev->rendercolor = Vector( 90, 180, 255 );
 	pev->renderfx = kRenderFxHologram;
 	pev->takedamage = DAMAGE_NO;
+	pev->solid = SOLID_NOT;	// no collisions while building
 
 	m_iOn = 0;
 	m_iAutoStart = 0;
@@ -1386,6 +1387,7 @@ void CZPTurret::BuildThink( void )
 	pev->rendercolor = Vector( 0, 0, 0 );
 	pev->renderfx = kRenderFxNone;
 	pev->takedamage = DAMAGE_AIM;
+	pev->solid = SOLID_SLIDEBOX;	// collisions come back with the real gun
 
 	m_iAutoStart = TRUE;
 	SetUse( &CBaseTurret::TurretUse );

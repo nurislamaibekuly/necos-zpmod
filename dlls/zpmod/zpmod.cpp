@@ -1434,6 +1434,40 @@ void ZPPlayerAimDisplay(edict_t* player) {
                 pTurretAim = pHit;
             }
         }
+
+        // the hologram stage is SOLID_NOT (everyone walks straight through
+        // it) and the engine never traces SOLID_NOT, so the line above
+        // cannot see a turret that is still building. Find it geometrically
+        // instead -- +use never traced either, so the hologram stayed usable
+        // through that path all along.
+        if (!pTurretAim && target == 0) {
+            float bestAlong = 512.0f;
+            for (int i = gpGlobals->maxClients + 1; i < gpGlobals->maxEntities; i++) {
+                edict_t* ed = INDEXENT(i);
+                if (!ed || ed->free) continue;
+                if (!FClassnameIs(ed, "zp_turret")) continue;
+                // hologram = still building; online turrets are solid (the
+                // trace handles them) and corpses are SOLID_NOT but not
+                // holograms
+                if (ed->v.renderfx != kRenderFxHologram) continue;
+
+                Vector mid = ed->v.origin + Vector(0, 0, 32);
+                Vector to = mid - eye;
+                float along = DotProduct(to, gpGlobals->v_forward);
+                if (along <= 0.0f || along >= bestAlong) continue;
+                Vector perp = to - gpGlobals->v_forward * along;
+                if (perp.Length() > 40.0f) continue;
+
+                // occlusion: the end point sits inside a non-solid body, so
+                // a short fraction means real world geometry blocks the view
+                TraceResult vis;
+                UTIL_TraceLine(eye, mid, ignore_monsters, player, &vis);
+                if (vis.flFraction < 0.98f) continue;
+
+                bestAlong = along;
+                pTurretAim = CBaseEntity::Instance(ed);
+            }
+        }
     }
 
     int prev = g_players[idx].aimTarget;
