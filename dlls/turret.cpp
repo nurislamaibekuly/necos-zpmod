@@ -30,6 +30,7 @@
 #include "monsters.h"
 #include "weapons.h"
 #include "effects.h"
+#include "zpmod/zpmod.h"
 
 extern Vector VecBModelOrigin( entvars_t* pevBModel );
 
@@ -1297,4 +1298,151 @@ void CSentry::SentryDeath( void )
 		pev->framerate = 0;
 		SetThink( NULL );
 	}
+}
+
+//=========================================================
+// zpmod: buildable sentry. Spawns through weapon_turret with
+// a 20 second hologram build, then becomes a normal sentry
+// that only ever shoots zombies.
+//=========================================================
+#define ZP_TURRET_BUILD_TIME	20.0f
+#define ZP_TURRET_HEALTH		500.0f
+
+class CZPTurret : public CSentry
+{
+public:
+	void Spawn( void );
+
+	void EXPORT BuildThink( void );
+	void EXPORT BuildGuardUse( CBaseEntity *pActivator, CBaseEntity *pCaller, USE_TYPE useType, float value );
+
+	// zombies only -- see the override for why this exists
+	CBaseEntity *BestVisibleEnemy( void );
+
+	void Shoot( Vector &vecSrc, Vector &vecDirToEnemy );
+
+	float m_flBuildDone;	// gpGlobals->time when the hologram stage ends
+	EHANDLE m_hBuilder;		// player who placed it (kill credit + messages)
+};
+
+LINK_ENTITY_TO_CLASS( zp_turret, CZPTurret )
+
+void CZPTurret::Spawn( void )
+{
+	CSentry::Spawn();
+
+	pev->classname = MAKE_STRING( "zp_turret" );
+	pev->health = ZP_TURRET_HEALTH;
+
+	// hologram stage: visible and solid, but untouchable and inert
+	pev->rendermode = kRenderTransAdd;
+	pev->renderamt = 200;
+	pev->rendercolor = Vector( 90, 180, 255 );
+	pev->renderfx = kRenderFxHologram;
+	pev->takedamage = DAMAGE_NO;
+
+	m_iOn = 0;
+	m_iAutoStart = 0;
+	m_hEnemy = NULL;
+
+	m_hBuilder = pev->owner ? CBaseEntity::Instance( pev->owner ) : NULL;
+	m_flBuildDone = gpGlobals->time + ZP_TURRET_BUILD_TIME;
+
+	// CSentry::Spawn just registered Initialize + TurretUse; either one could
+	// wake the turret (or let +use wake it) before the build is finished
+	SetUse( &CZPTurret::BuildGuardUse );
+	SetThink( &CZPTurret::BuildThink );
+	pev->nextthink = gpGlobals->time + 0.1f;
+}
+
+void CZPTurret::BuildGuardUse( CBaseEntity *pActivator, CBaseEntity *pCaller, USE_TYPE useType, float value )
+{
+	// +use does nothing while the turret is still a hologram
+}
+
+void CZPTurret::BuildThink( void )
+{
+	pev->nextthink = gpGlobals->time + 0.1f;
+
+	if( g_round.state != RS_ACTIVE )
+	{
+		UTIL_Remove( this );
+		return;
+	}
+
+	if( gpGlobals->time < m_flBuildDone )
+		return;
+
+	// build finished: drop the hologram and bring the gun online
+	pev->rendermode = kRenderNormal;
+	pev->renderamt = 255;
+	pev->rendercolor = Vector( 0, 0, 0 );
+	pev->renderfx = kRenderFxNone;
+	pev->takedamage = DAMAGE_AIM;
+
+	m_iAutoStart = TRUE;
+	SetUse( &CBaseTurret::TurretUse );
+
+	EMIT_SOUND( ENT( pev ), CHAN_ITEM, "turret/tu_ping.wav", 1.0, ATTN_NORM );
+
+	if( m_hBuilder != NULL )
+		ClientPrint( m_hBuilder->pev, HUD_PRINTCENTER, "Turret online" );
+
+	// Run the stock one-time init (turn-rate defaults, bone controllers) --
+	// Initialize() only ran if the spawn-time think had not been replaced,
+	// and without it m_iBaseTurnRate stays 0 and the turret never turns.
+	// It registers AutoSearchThink for m_iAutoStart, so deploy right after.
+	Initialize();
+	SetThink( &CBaseTurret::Deploy );
+	pev->nextthink = gpGlobals->time + 0.1f;
+}
+
+// Look() links every alive client whose relationship is not R_NO
+// (monsters.cpp), and for CLASS_MACHINE that table says R_DL for ALL
+// players -- humans included. So the stock BestVisibleEnemy() would happily
+// gun down the builder's own team. Walk the same list, keep zombies only.
+CBaseEntity *CZPTurret::BestVisibleEnemy( void )
+{
+	CBaseEntity *pReturn = NULL;
+	float flNearest = 8192.0f;
+
+	for( CBaseEntity *pEnt = m_pLink; pEnt != NULL; pEnt = pEnt->m_pLink )
+	{
+		if( !pEnt->IsAlive() || !pEnt->IsPlayer() )
+			continue;
+		if( !ZPIsZombie( pEnt->edict() ) )
+			continue;
+
+		float flDist = ( pEnt->pev->origin - pev->origin ).Length();
+		if( flDist <= flNearest )
+		{
+			flNearest = flDist;
+			pReturn = pEnt;
+		}
+	}
+
+	return pReturn;
+}
+
+// CSentry::Shoot with one change: pass the builder as the attacker so the
+// kill credits (frags, streaks, stats, infection checks) land on the player.
+void CZPTurret::Shoot( Vector &vecSrc, Vector &vecDirToEnemy )
+{
+	entvars_t *pevAttacker = ( m_hBuilder != NULL ) ? m_hBuilder->pev : NULL;
+
+	FireBullets( 1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_RANGE, BULLET_MONSTER_MP5, 1, 0, pevAttacker );
+
+	switch( RANDOM_LONG( 0, 2 ) )
+	{
+	case 0:
+		EMIT_SOUND( ENT( pev ), CHAN_WEAPON, "weapons/hks1.wav", 1, ATTN_NORM );
+		break;
+	case 1:
+		EMIT_SOUND( ENT( pev ), CHAN_WEAPON, "weapons/hks2.wav", 1, ATTN_NORM );
+		break;
+	case 2:
+		EMIT_SOUND( ENT( pev ), CHAN_WEAPON, "weapons/hks3.wav", 1, ATTN_NORM );
+		break;
+	}
+	pev->effects = pev->effects | EF_MUZZLEFLASH;
 }

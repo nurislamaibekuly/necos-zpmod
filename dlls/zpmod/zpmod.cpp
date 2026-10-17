@@ -1053,10 +1053,11 @@ void ZPMakeHuman(edict_t* ed) {
 
     pPlayer->GiveNamedItem("weapon_molotov");
     pPlayer->GiveNamedItem("weapon_freezebomb");
+    pPlayer->GiveNamedItem("weapon_turret");
 
-    ZP_Trace("ZPMakeHuman gave molotov+freezebomb to %d (weapons=0x%X)\n",
+    ZP_Trace("ZPMakeHuman gave molotov+freezebomb+turret kit to %d (weapons=0x%X)\n",
              ENTINDEX(ed), (unsigned int)ed->v.weapons);
-    ALERT(at_console, "ZPDEBUG: ZPMakeHuman gave molotov+freezebomb to %d (weapons=0x%X)\n",
+    ALERT(at_console, "ZPDEBUG: ZPMakeHuman gave molotov+freezebomb+turret kit to %d (weapons=0x%X)\n",
           ENTINDEX(ed), (unsigned int)ed->v.weapons);
 
     UTIL_ScreenFade(pPlayer, Vector(0, 255, 120), 0.4f, 0.2f, 255, FFADE_IN);
@@ -1343,6 +1344,25 @@ void ZPZombieSwing(edict_t* player)
         else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_2.wav", 1.0, ATTN_NORM);
         else EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_3.wav", 1.0, ATTN_NORM);
     }
+    else if (pHit && !pHit->IsPlayer() &&
+             pHit->pev->takedamage != DAMAGE_NO && pHit->pev->health > 0.0f) {
+        // claws hurt damageable world entities (breakable windows, crates,
+        // the zp_turret hull once it finished building, ...) exactly like
+        // the human crowbar does: direct TakeDamage with DMG_CLUB so
+        // func_breakable's per-material glass/wood paths fire. Building
+        // turrets are DAMAGE_NO, so the hologram stage stays invulnerable.
+        // Other players still fall through to the miss branch below: no FF.
+        float dmg = ZPZombieClawDamage(player);
+        pHit->TakeDamage(pPlayer->pev, pPlayer->pev, dmg, DMG_CLUB);
+
+        // impact feedback, same pool as the wall branch
+        int r = RANDOM_LONG(1, 3);
+        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_1.wav", 1.0, ATTN_NORM);
+        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_2.wav", 1.0, ATTN_NORM);
+        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_3.wav", 1.0, ATTN_NORM);
+
+        UTIL_DecalTrace(&tr, DECAL_GUNSHOT1);
+    }
     else if (tr.flFraction < 1.0f && tr.pHit && tr.pHit == ENT(0)) {
         // me when wall :3
         int r = RANDOM_LONG(1, 3);
@@ -1393,6 +1413,7 @@ void ZPPlayerAimDisplay(edict_t* player) {
     if (!pPlayer || !pPlayer->IsPlayer()) return;
 
     int target = 0;
+    CBaseEntity* pTurretAim = NULL;
 
     if (pPlayer->IsAlive()) {
         UTIL_MakeVectors(pPlayer->pev->v_angle);
@@ -1409,11 +1430,14 @@ void ZPPlayerAimDisplay(edict_t* player) {
                 if (t >= 1 && t <= gpGlobals->maxClients && t != idx && ZPIsPlayerConnected(INDEXENT(t)))
                     target = t;
             }
+            else if (pHit && FClassnameIs(pHit->pev, "zp_turret")) {
+                pTurretAim = pHit;
+            }
         }
     }
 
     int prev = g_players[idx].aimTarget;
-    if (target == 0 && prev == 0)
+    if (target == 0 && !pTurretAim && prev == 0)
         return;
 
     g_players[idx].aimTarget = target;
@@ -1429,8 +1453,47 @@ void ZPPlayerAimDisplay(edict_t* player) {
     aim.fadeoutTime = 0;
     aim.holdTime = 0.5f;
 
-    if (target == 0) {
+    if (target == 0 && !pTurretAim) {
         UTIL_HudMessage(CBaseEntity::Instance(player), aim, "");
+        return;
+    }
+
+    if (pTurretAim) {
+        int hp = (int)pTurretAim->pev->health;
+        if (hp < 0) hp = 0;
+        int maxHp = 500; // ZP_TURRET_HEALTH
+        int pct = (maxHp > 0) ? (hp * 100) / maxHp : 0;
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+
+        // hologram build vs armed
+        bool building = (pTurretAim->pev->takedamage == DAMAGE_NO);
+
+        // builder name from owner (set at Create)
+        const char* builder = "?";
+        if (pTurretAim->pev->owner) {
+            edict_t* own = pTurretAim->pev->owner;
+            if (own && !own->free) {
+                const char* n = STRING(own->v.netname);
+                if (n && n[0]) builder = n;
+            }
+        }
+
+        // orange while building, health-colored once online
+        if (building) {
+            aim.r1 = 90; aim.g1 = 180; aim.b1 = 255;
+        } else {
+            aim.r1 = (pct > 50) ? 40 : 255;
+            aim.g1 = (pct > 50) ? 255 : (int)(255 * pct / 100.0f);
+            aim.b1 = (pct > 50) ? 90 : 0;
+        }
+
+        char buf[128];
+        if (building)
+            snprintf(buf, sizeof(buf), "TURRET [BUILDING]\nOwner: %s", builder);
+        else
+            snprintf(buf, sizeof(buf), "TURRET\nHP  %d / %d  (%d%%)\nOwner: %s", hp, maxHp, pct, builder);
+        UTIL_HudMessage(CBaseEntity::Instance(player), aim, buf);
         return;
     }
 
@@ -1649,6 +1712,7 @@ void ZPCleanupWorld(void) {
 
         if (!strncmp(cls, "weaponbox", 9) ||
             !strncmp(cls, "zp_grenade", 10) ||
+            !strncmp(cls, "zp_turret", 9) ||
             !strncmp(cls, "zp_supplybox", 13) ||
             !strncmp(cls, "grenade", 7))
             UTIL_Remove(CBaseEntity::Instance(ed));
@@ -2667,8 +2731,9 @@ void ZPRoundThink(ZPRound* round) {
                 /* apply the round mode's starting infection */
                 ZPFeatureStartInfections(round, players, count);
 
-                /* hand every surviving human the ZP throwables (first round
-                   has no prior round-end reset to inherit them from) */
+                /* hand every surviving human the ZP throwables + turret kit
+                   (first round has no prior round-end reset to inherit
+                   them from) */
                 for (int i = 1; i <= gpGlobals->maxClients; i++) {
                     edict_t* ed = INDEXENT(i);
                     if (!ZPIsPlayerConnected(ed) || !ZPIsHuman(ed)) continue;
@@ -2676,6 +2741,7 @@ void ZPRoundThink(ZPRound* round) {
                     if (!pp || !pp->IsAlive()) continue;
                     pp->GiveNamedItem("weapon_molotov");
                     pp->GiveNamedItem("weapon_freezebomb");
+                    pp->GiveNamedItem("weapon_turret");
                 }
 
                 /* ARMOR event: humans get a full suit at spawn */
