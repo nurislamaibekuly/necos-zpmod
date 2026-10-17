@@ -1581,14 +1581,46 @@ void ZPHUD()
     // top center: round status / timer
     char top[128];
     switch (g_round.state) {
-        case RS_PREP:
+        case RS_PREP: {
             if (g_round.countdownStarted && gpGlobals->time < g_round.nextStateTime) {
                 int sec = (int)ceilf(g_round.nextStateTime - gpGlobals->time);
-                snprintf(top, sizeof(top), "ROUND STARTS IN %02d:%02d  [%s]", sec / 60, sec % 60, ZPModeName(g_round.mode));
+                snprintf(top, sizeof(top), "INFECTION STARTING  [%s]", ZPModeName(g_round.mode));
+
+                // the countdown itself, as a styled custom HUD line: the old
+                // HUD_PRINTCENTER text was plain white, could not be colored,
+                // and re-printed once a second so it flickered
+                char cd[64];
+                snprintf(cd, sizeof(cd), "INFECTION IN %d", sec);
+
+                hudtextparms_t cdHud;
+                memset(&cdHud, 0, sizeof(cdHud));
+                cdHud.channel = 1;
+                cdHud.x = -1;
+                cdHud.y = 0.30f;
+                cdHud.a1 = 255;
+                cdHud.fadeinTime = 0;
+                cdHud.fadeoutTime = 0;
+                cdHud.holdTime = 0.25f;
+
+                if (sec > 10) {
+                    cdHud.r1 = 255; cdHud.g1 = 220; cdHud.b1 = 0;   // yellow
+                } else if (sec > 5) {
+                    cdHud.r1 = 255; cdHud.g1 = 140; cdHud.b1 = 0;   // orange
+                } else {
+                    // final seconds: red that pulses to match the freeze
+                    // window the countdown is closing out
+                    float ph = 0.5f + 0.5f * sinf(gpGlobals->time * 12.0f);
+                    cdHud.r1 = 255;
+                    cdHud.g1 = (byte)(30.0f + 90.0f * ph);
+                    cdHud.b1 = 0;
+                    cdHud.a1 = (byte)(130.0f + 125.0f * ph);
+                }
+                UTIL_HudMessageAll(cdHud, cd);
             } else {
                 snprintf(top, sizeof(top), "ROUND PREPARING");
             }
             break;
+        }
         case RS_ACTIVE: {
             int sec = (int)ceilf((g_round.roundStartTime + g_round.roundDuration) - gpGlobals->time);
             if (sec < 0) sec = 0;
@@ -2719,10 +2751,8 @@ void ZPRoundThink(ZPRound* round) {
         if (secLeft > 0 && secLeft != round->lastAnnounce) {
             round->lastAnnounce = secLeft;
 
-            char msg[64];
-            snprintf(msg, sizeof(msg), "Infection in %d", secLeft);
-            UTIL_ClientPrintAll(HUD_PRINTCENTER, msg);
-
+            // the seconds are shown by ZPHUD's styled countdown HUD now;
+            // only the last-10 voice callouts remain here
             if (secLeft <= 10 && lastSpokeSecond != secLeft) {
                 lastSpokeSecond = secLeft;
 
