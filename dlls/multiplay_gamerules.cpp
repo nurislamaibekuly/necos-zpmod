@@ -128,6 +128,11 @@ BOOL CHalfLifeMultiplay::ClientCommand( CBasePlayer *pPlayer, const char *pcmd )
 // arsenal can be retuned from the console (or server.cfg) without a rebuild.
 cvar_t zp_weapon_damage = { "zp_weapon_damage", "1.5", FCVAR_SERVER };
 
+// Per-shot damage for the zp_turret, which fires ~10 rounds/sec. Kept out of
+// zp_weapon_damage so the sentry can be tuned on its own; 20 matches roughly
+// double a scaled MP5 user and chews through the zombie classes' 2000-5000 HP.
+cvar_t zp_turret_damage = { "zp_turret_damage", "20", FCVAR_SERVER };
+
 //=========================================================
 //=========================================================
 void CHalfLifeMultiplay::RefreshSkillData( void )

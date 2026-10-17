@@ -1426,11 +1426,28 @@ CBaseEntity *CZPTurret::BestVisibleEnemy( void )
 
 // CSentry::Shoot with one change: pass the builder as the attacker so the
 // kill credits (frags, streaks, stats, infection checks) land on the player.
+//
+// The stock call passes iDamage 0, which drops into FireBullets' bullet-type
+// fallback: gSkillData.monDmgMP5, i.e. sk_9mmAR_bullet -- a flat 3/4/5 per
+// shot that zp_weapon_damage never scales (it only touches the plrDmg*
+// values). At the sentry's 10 shots/sec that is a tickle against the zombie
+// classes' 2000-5000 HP. Passing an explicit iDamage is not an option:
+// FireBullets flags anything over 16 as DMG_ALWAYSGIB (combat.cpp), which
+// would gib the player corpse on every turret kill instead of playing the
+// death animation. So lend the skill slot to the turret for the duration of
+// the synchronous call and restore it right after -- the fallback branch
+// reads it while we are inside FireBullets, and the damage type stays a
+// plain DMG_BULLET.
+extern cvar_t zp_turret_damage;
+
 void CZPTurret::Shoot( Vector &vecSrc, Vector &vecDirToEnemy )
 {
 	entvars_t *pevAttacker = ( m_hBuilder != NULL ) ? m_hBuilder->pev : NULL;
 
+	float flOldDmg = gSkillData.monDmgMP5;
+	gSkillData.monDmgMP5 = zp_turret_damage.value > 0.0f ? zp_turret_damage.value : 1.0f;
 	FireBullets( 1, vecSrc, vecDirToEnemy, TURRET_SPREAD, TURRET_RANGE, BULLET_MONSTER_MP5, 1, 0, pevAttacker );
+	gSkillData.monDmgMP5 = flOldDmg;
 
 	switch( RANDOM_LONG( 0, 2 ) )
 	{
