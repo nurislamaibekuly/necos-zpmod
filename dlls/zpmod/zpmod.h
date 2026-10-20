@@ -182,6 +182,7 @@ void ZPSupplyBoxCommand(void);
 void ZPSupplyBoxClearCommand(void);
 void ZPCleanupWorld(void);
 edict_t* ZPTurretBuilder(edict_t* pTurret);
+void ZPRemoveTurretsOf(edict_t* pBuilder);
 void ZPRoundThink(ZPRound* round);
 void ZPRoundRestart(void);
 void ZPFeatureInit(void);
@@ -223,6 +224,12 @@ bool ZPIsZombie(edict_t* player);
 // per-client fake fullbright, plus the red vision screenfade while infected.
 // Called on every role change and re-asserted from ZPPlayerThink.
 void ZPSyncZombieState(edict_t* player);
+
+// Keeps the "team" userinfo key in sync with v.team ("human"/"zombie"/
+// "spectator"). Parabot's engine wrapper turns on team-play classification as
+// soon as the mod writes a "team" key once; without it every bot treats every
+// other player as an enemy.
+void ZPSyncTeamKey(edict_t* player);
 
 // Re-applies the model a player's current role requires, if v.modelindex does
 // not already point at it. Returns TRUE if the model was changed.

@@ -132,8 +132,15 @@ static const int ZMCLAW_MAX_SEQ = 8;
 // Body claw anims for the models that have them. Ref_aim holds the windup,
 // the two _run entries are the actual swipes (a walk swipe and a run swipe on
 // the converted models). Order matters: it is the swing cycle.
-static const char* const g_kBodyClaws3[] = { "zbs_attack_walk", "zbs_attack1_run", "zbs_attack2_run" };
-static const char* const g_kBodyClaws2[] = { "zbs_attack_walk", "zbs_attack1_run" };
+//
+// These MUST keep the trailing NULL. ZPZombieSwing walks them with
+// "while (bodyClaws[n])" and hands interior pointers to
+// LookupFirstUsableSequence, whose own loop also stops at NULL. Without the
+// terminator both run off the end of the array into adjacent static data
+// (the class table's float health/armor fields, in practice) and feed
+// garbage pointers to strcasecmp -- the zombie-swing SIGSEGV.
+static const char* const g_kBodyClaws3[] = { "zbs_attack_walk", "zbs_attack1_run", "zbs_attack2_run", NULL };
+static const char* const g_kBodyClaws2[] = { "zbs_attack_walk", "zbs_attack1_run", NULL };
 static const char* const g_kBodyClawsNone[] = { NULL };
 
 // Spawn distribution, index-aligned with g_zmClasses[]. Deliberately separate
@@ -489,6 +496,35 @@ static bool ZPLightstyleWantsFloat(void) {
 // how often the red vision fade is re-pinned while someone stays infected
 static const float ZP_VISION_REFRESH = 1.0f;
 
+// Parabot classifies players as friend or foe from the "team" userinfo key:
+// its pfnSetClientKeyValue wrapper flips valveTeamPlayMode on and registers
+// every value it has seen the moment the mod writes a "team" key. Until that
+// happens it runs in deathmatch mode and every player -- including the bots'
+// own teammates -- reads back as an enemy. The engine returns "" for a key
+// that was never written, which is why the fallback below treats anything
+// except an explicit zombie/spectator code as human; role changes always run
+// ZPSyncZombieState, which calls this, so the key tracks v.team from spawn on.
+static const char* ZPTeamKeyName(int team) {
+    if (team == RoleToInt(ROLE_ZOMBIE))    return "zombie";
+    if (team == RoleToInt(ROLE_SPECTATOR)) return "spectator";
+    return "human";
+}
+
+void ZPSyncTeamKey(edict_t* player) {
+    if (!player || player->free) return;
+    if (!ZPIsPlayerConnected(player)) return;
+
+    const char* want = ZPTeamKeyName(player->v.team);
+
+    char* infoBuffer = g_engfuncs.pfnGetInfoKeyBuffer(player);
+    if (!infoBuffer) return;
+
+    const char* cur = g_engfuncs.pfnInfoKeyValue(infoBuffer, "team");
+    if (cur && strcmp(cur, want) == 0) return;
+
+    g_engfuncs.pfnSetClientKeyValue(ENTINDEX(player), infoBuffer, "team", want);
+}
+
 // Pushes one player's infection state to their own client, no client dll
 // involved: lightstyle 0 is driven to "z" (double bright) as a per-client fake
 // fullbright and back to "m" (the map's normal light) once they stop being a
@@ -503,6 +539,8 @@ void ZPSyncZombieState(edict_t* player) {
 
     int idx = ENTINDEX(player);
     bool zombie = ZPIsZombie(player);
+
+    ZPSyncTeamKey(player);
 
     MESSAGE_BEGIN(MSG_ONE, SVC_LIGHTSTYLE, NULL, player);
         WRITE_BYTE(0);
@@ -909,12 +947,17 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
                      (int)pPlayer->pev->gaitsequence);
         }
 
+        // Per-zombie sounds go on per-entity channels with normal
+        // attenuation, like the AmxModX Zombie Plague's emit_sound() on
+        // CHAN_VOICE. CHAN_AUTO with attenuation 0.2 made every infection
+        // audible across the whole map at full volume, so a round where
+        // several players turned at once stacked into a wall of sound.
         if (RANDOM_LONG(1, 2) == 1) {
-            EMIT_SOUND(player, CHAN_AUTO, "zpmod/coming_1.wav", 1.0, 0.2f);
-            EMIT_SOUND(player, CHAN_AUTO, "zpmod/human_death_1.wav", 1.0, ATTN_NORM);
+            EMIT_SOUND(player, CHAN_VOICE, "zpmod/coming_1.wav", 1.0, ATTN_NORM);
+            EMIT_SOUND(player, CHAN_BODY, "zpmod/human_death_1.wav", 1.0, ATTN_NORM);
         } else {
-            EMIT_SOUND(player, CHAN_AUTO, "zpmod/coming_2.wav", 1.0, 0.2f);
-            EMIT_SOUND(player, CHAN_AUTO, "zpmod/human_death_2.wav", 1.0, ATTN_NORM);
+            EMIT_SOUND(player, CHAN_VOICE, "zpmod/coming_2.wav", 1.0, ATTN_NORM);
+            EMIT_SOUND(player, CHAN_BODY, "zpmod/human_death_2.wav", 1.0, ATTN_NORM);
         }
     }
 
@@ -960,11 +1003,13 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     // red infection burst — heavier for the boss
     UTIL_ParticleEffect(pPlayer->pev->origin + Vector(0, 0, 32), Vector(0, 0, 96), 235, g_players[idx].ZMClass == ZM_CLASS_BOSS ? 60 : 30);
 
+    ZP_Trace("ZPINFECT pre-strip by=%d weapons=0x%X\n", idx, (unsigned int)player->v.weapons);
     pPlayer->RemoveAllItems(false);
     pPlayer->GiveNamedItem("weapon_crowbar");
     pPlayer->SelectItem("weapon_crowbar");
     // infection bomb: zombies only, one per infection
     pPlayer->GiveNamedItem("weapon_infectionbomb");
+    ZP_Trace("ZPINFECT post by=%d weapons=0x%X\n", idx, (unsigned int)player->v.weapons);
 
     player->v.team = RoleToInt(ROLE_ZOMBIE);
     // the claw/bomb viewmodels are class specific and get attached by the
@@ -1011,6 +1056,9 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     MESSAGE_END();
 
     ZPThunderStrike(player);
+
+    // a zombie cannot own a sentry: drop any turret the human had deployed
+    ZPRemoveTurretsOf(player);
 
     ZPSyncZombieState(player);
 }
@@ -1093,7 +1141,7 @@ void ZPForceRoundEnd(int winner) {
         for (int i = 1; i <= gpGlobals->maxClients; i++) {
             edict_t* ed = INDEXENT(i);
             if (ZPIsPlayerConnected(ed) && ed->v.health > 0)
-                EMIT_SOUND(ed, CHAN_AUTO, "zpmod/round_draw.wav", 1.0, ATTN_NORM);
+                CLIENT_COMMAND(ed, "spk \"zpmod/round_draw.wav\"\n");
         }
     }
 
@@ -1133,6 +1181,10 @@ bool ZPDied(edict_t* player, int attackerIndex) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer) return false;
 
+    // dead builders lose their turret (the infection conversion below also
+    // removes it via ZPInfectPlayer, but real deaths only go through here)
+    ZPRemoveTurretsOf(player);
+
     ZPFeatureOnDied(player);
     ZPStatsOnDied(player);
 
@@ -1152,7 +1204,7 @@ bool ZPDied(edict_t* player, int attackerIndex) {
 
     if (ZPIsZombie(player)) {
         int zidx = ENTINDEX(player);
-        EMIT_SOUND(player, CHAN_AUTO,
+        EMIT_SOUND(player, CHAN_VOICE,
                    ZMClassDeathSound(g_players[zidx].ZMClass, RANDOM_LONG(0, 1)),
                    1.0, ATTN_NORM);
 
@@ -1201,7 +1253,7 @@ void ZPHurt(edict_t* player) {
     if (ZPIsZombie(player)) {
         int idx = ENTINDEX(player);
         if (idx < 1 || idx > gpGlobals->maxClients) return;
-        EMIT_SOUND(player, CHAN_AUTO, ZMClassHurtSound(g_players[idx].ZMClass, RANDOM_LONG(0, 1)),
+        EMIT_SOUND(player, CHAN_VOICE, ZMClassHurtSound(g_players[idx].ZMClass, RANDOM_LONG(0, 1)),
                    1.0, ATTN_NORM);
     }
 }
@@ -1340,9 +1392,9 @@ void ZPZombieSwing(edict_t* player)
 
         // fuckass sounds
         int r = RANDOM_LONG(1, 3);
-        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_1.wav", 1.0, ATTN_NORM);
-        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_2.wav", 1.0, ATTN_NORM);
-        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/attack_3.wav", 1.0, ATTN_NORM);
+        if (r == 1) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/attack_1.wav", 1.0, ATTN_NORM);
+        else if (r == 2) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/attack_2.wav", 1.0, ATTN_NORM);
+        else EMIT_SOUND(player, CHAN_WEAPON, "zpmod/attack_3.wav", 1.0, ATTN_NORM);
     }
     else if (pHit && !pHit->IsPlayer() &&
              pHit->pev->takedamage != DAMAGE_NO && pHit->pev->health > 0.0f) {
@@ -1357,18 +1409,18 @@ void ZPZombieSwing(edict_t* player)
 
         // impact feedback, same pool as the wall branch
         int r = RANDOM_LONG(1, 3);
-        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_1.wav", 1.0, ATTN_NORM);
-        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_2.wav", 1.0, ATTN_NORM);
-        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_3.wav", 1.0, ATTN_NORM);
+        if (r == 1) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/wall_1.wav", 1.0, ATTN_NORM);
+        else if (r == 2) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/wall_2.wav", 1.0, ATTN_NORM);
+        else EMIT_SOUND(player, CHAN_WEAPON, "zpmod/wall_3.wav", 1.0, ATTN_NORM);
 
         UTIL_DecalTrace(&tr, DECAL_GUNSHOT1);
     }
     else if (tr.flFraction < 1.0f && tr.pHit && tr.pHit == ENT(0)) {
         // me when wall :3
         int r = RANDOM_LONG(1, 3);
-        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_1.wav", 1.0, ATTN_NORM);
-        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_2.wav", 1.0, ATTN_NORM);
-        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/wall_3.wav", 1.0, ATTN_NORM);
+        if (r == 1) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/wall_1.wav", 1.0, ATTN_NORM);
+        else if (r == 2) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/wall_2.wav", 1.0, ATTN_NORM);
+        else EMIT_SOUND(player, CHAN_WEAPON, "zpmod/wall_3.wav", 1.0, ATTN_NORM);
 
         // draw some cool motherfucking decals for example idk fuck this bullshit
         UTIL_DecalTrace(&tr, DECAL_GUNSHOT1);
@@ -1376,9 +1428,9 @@ void ZPZombieSwing(edict_t* player)
     else {
         // clean miss: still give the swing a woosh
         int r = RANDOM_LONG(1, 3);
-        if (r == 1) EMIT_SOUND(player, CHAN_AUTO, "zpmod/swing_1.wav", 1.0, ATTN_NORM);
-        else if (r == 2) EMIT_SOUND(player, CHAN_AUTO, "zpmod/swing_2.wav", 1.0, ATTN_NORM);
-        else EMIT_SOUND(player, CHAN_AUTO, "zpmod/swing_3.wav", 1.0, ATTN_NORM);
+        if (r == 1) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/swing_1.wav", 1.0, ATTN_NORM);
+        else if (r == 2) EMIT_SOUND(player, CHAN_WEAPON, "zpmod/swing_2.wav", 1.0, ATTN_NORM);
+        else EMIT_SOUND(player, CHAN_WEAPON, "zpmod/swing_3.wav", 1.0, ATTN_NORM);
     }
 }
 
@@ -2359,12 +2411,18 @@ void ZPAnnounceMvp(void) {
 }
 
 void ZPRoundWinSound(edict_t* player, const char* winSound, const char* ambientPrefix, int ambientCount) {
-    EMIT_SOUND(player, CHAN_AUTO, winSound, 1.0, ATTN_NORM);
+    if (!player || (player->v.flags & FL_FAKECLIENT)) return;
+
+    // Announcer sounds are local one-shots ("spk"), exactly like Zombie
+    // Plague's PlaySound() in AmxModX. EMIT_SOUND once per connected player
+    // put one positional source per player into the same mix, so the
+    // announcement got louder with every player in the server.
+    CLIENT_COMMAND(player, "spk \"%s\"\n", winSound);
 
     if (ambientCount > 0) {
         char path[64];
         snprintf(path, sizeof(path), "%s_ambient_%02d.wav", ambientPrefix, RANDOM_LONG(1, ambientCount));
-        EMIT_SOUND(player, CHAN_AUTO, path, 1.0, ATTN_NORM);
+        CLIENT_COMMAND(player, "spk \"%s\"\n", path);
     }
 }
 
@@ -2706,7 +2764,7 @@ void ZPRoundThink(ZPRound* round) {
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
                 if (ZPIsPlayerConnected(ed) && ed->v.health > 0) {
-                    EMIT_SOUND(ed, CHAN_AUTO, "zpmod/round_start.wav", 1.0, ATTN_NORM);
+                    CLIENT_COMMAND(ed, "spk \"zpmod/round_start.wav\"\n");
                 }
             }
         }
@@ -2752,7 +2810,7 @@ void ZPRoundThink(ZPRound* round) {
                     for (int i = 1; i <= gpGlobals->maxClients; i++) {
                         edict_t* ed = INDEXENT(i);
                         if (!ZPIsPlayerConnected(ed) || ed->v.health <= 0) continue;
-                        EMIT_SOUND(ed, CHAN_AUTO, path, 1.0, ATTN_NORM);
+                        CLIENT_COMMAND(ed, "spk \"%s\"\n", path);
                     }
                 }
             }
@@ -2793,6 +2851,7 @@ void ZPRoundThink(ZPRound* round) {
                     pp->GiveNamedItem("weapon_molotov");
                     pp->GiveNamedItem("weapon_freezebomb");
                     pp->GiveNamedItem("weapon_turret");
+                    ZP_Trace("ZPGIVE roundstart by=%d weapons=0x%X\n", i, (unsigned int)ed->v.weapons);
                 }
 
                 /* ARMOR event: humans get a full suit at spawn */
@@ -2930,7 +2989,7 @@ void ZPRoundThink(ZPRound* round) {
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
                 if (ZPIsPlayerConnected(ed) && ed->v.health > 0)
-                    EMIT_SOUND(ed, CHAN_AUTO, "zpmod/round_draw.wav", 1.0, ATTN_NORM);
+                    CLIENT_COMMAND(ed, "spk \"zpmod/round_draw.wav\"\n");
             }
         }
         else if (gpGlobals->time >= round->roundStartTime + round->roundDuration) {

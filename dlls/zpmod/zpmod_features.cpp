@@ -284,7 +284,7 @@ s_blackoutAt = 0.0f;
             edict_t* e = INDEXENT(i);
             if (!ZPIsPlayerConnected(e) || !g_players[i].lastHuman) continue;
             if (e->v.health <= 0 || !ZPIsHuman(e)) continue;
-            EMIT_SOUND(e, CHAN_AUTO, "player/heartbeat1.wav", 1.0, ATTN_NORM);
+            EMIT_SOUND(e, CHAN_STATIC, "player/heartbeat1.wav", 1.0, ATTN_NORM);
             break;
         }
     }

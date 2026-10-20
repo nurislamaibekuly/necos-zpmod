@@ -330,7 +330,8 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
         ZPAdminMsg(sender,
             "^2!help^7 ^2!auth^7 <pass> ^2!who^7 ^2!stats^7 ^2!top^7\n"
             "^1Admin:^7 !kick !ban !unban !slap !slay !heal !freeze !unfreeze\n"
-            "^1Admin:^7 !tp !bring !zombie !human !noclip !god !map !endround !restart");
+            "^1Admin:^7 !tp !bring !zombie !human !noclip !god !map !endround !restart\n"
+            "^1Admin:^7 !bots <n> !addbot [n] !removebot [n]");
         return true;
     }
 
@@ -588,6 +589,44 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     if (!strcmp(cmd, "restart")) {
         ZPRoundRestart();
         ZPAdminMsg(sender, "^4[Admin] Round restarting...^7");
+        return true;
+    }
+
+    // ---- bot management (Parabot) ----
+    if (!strcmp(cmd, "bots") || !strcmp(cmd, "botcount")) {
+        int live = 0;
+        for (int i = 1; i <= gpGlobals->maxClients; i++) {
+            edict_t* e = INDEXENT(i);
+            if (ZPIsPlayerConnected(e) && (e->v.flags & FL_FAKECLIENT)) live++;
+        }
+
+        if (argc < 2) {
+            ZPAdminMsg(sender, UTIL_VarArgs("^4[Admin]^7 %d bot(s) in game. ^3!bots <n>^7 to set.", live));
+            return true;
+        }
+
+        int n = atoi(argv[1]);
+        if (n < 0) n = 0;
+        SERVER_COMMAND(UTIL_VarArgs("pb_botcount %d\n", n));
+        UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] Bot count set to %d by %s\n", n, STRING(sender->v.netname)));
+        return true;
+    }
+
+    if (!strcmp(cmd, "addbot") || !strcmp(cmd, "addbots")) {
+        int n = argc >= 2 ? atoi(argv[1]) : 1;
+        if (n < 1) n = 1;
+        if (n > 32) n = 32;
+        SERVER_COMMAND(UTIL_VarArgs("pb_addbot %d\n", n));
+        UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] Adding %d bot(s) (%s)\n", n, STRING(sender->v.netname)));
+        return true;
+    }
+
+    if (!strcmp(cmd, "removebot") || !strcmp(cmd, "removebots") || !strcmp(cmd, "kickbots")) {
+        int n = argc >= 2 ? atoi(argv[1]) : 1;
+        if (n < 1) n = 1;
+        if (n > 32) n = 32;
+        SERVER_COMMAND(UTIL_VarArgs("pb_removebot %d\n", n));
+        UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] Removing %d bot(s) (%s)\n", n, STRING(sender->v.netname)));
         return true;
     }
 

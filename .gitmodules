@@ -1,3 +1,6 @@
 [submodule "freevgui"]
 	path = freevgui
 	url = https://github.com/FWGS/freevgui.git
+[submodule "external/parabot"]
+	path = external/parabot
+	url = https://github.com/nurislamaibekuly/parabot-for-necos-zpmod.git

@@ -157,7 +157,10 @@ void CWeaponTurretKit::PrimaryAttack( void )
 	int idx = ENTINDEX( m_pPlayer->edict() );
 
 	if( !ZPIsHuman( m_pPlayer->edict() ) )
+	{
+		ZP_Trace( "ZPTURRET place refused by=%d zombie\n", idx );
 		return; // zombies can never place turrets
+	}
 
 	if( g_round.state != RS_ACTIVE )
 	{
@@ -171,7 +174,15 @@ void CWeaponTurretKit::PrimaryAttack( void )
 		return; // frozen players can't build either
 
 	if( m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0 )
+	{
+		// spent kit still selected (e.g. the holder keeps the attack button
+		// held): ItemPostFrame never reaches WeaponIdle, so retire it here.
+		ZP_Trace( "ZPTURRET place refused by=%d ammo=0\n", idx );
+		m_pPlayer->pev->weapons &= ~( 1 << m_iId );
+		ScheduleEmptyRetire();
+		RetireWeapon();
 		return;
+	}
 
 	// one live turret per builder (kits are single-use, so this only bites
 	// on re-give paths like ZPMakeHuman while an old turret is still up)
@@ -186,6 +197,7 @@ void CWeaponTurretKit::PrimaryAttack( void )
 	}
 	if( live >= TURRET_KIT_MAX_ACTIVE )
 	{
+		ZP_Trace( "ZPTURRET place refused by=%d live=%d\n", idx, live );
 		ClientPrint( m_pPlayer->pev, HUD_PRINTTALK, "Your turret is already deployed" );
 		m_flNextPrimaryAttack = GetNextAttackDelay( 0.5f );
 		return;
@@ -200,6 +212,7 @@ void CWeaponTurretKit::PrimaryAttack( void )
 
 	if( tr.flFraction >= 1.0f || !tr.pHit )
 	{
+		ZP_Trace( "ZPTURRET place refused by=%d nosurface frac=%.2f\n", idx, tr.flFraction );
 		ClientPrint( m_pPlayer->pev, HUD_PRINTTALK, "Aim at a surface to place the turret" );
 		m_flNextPrimaryAttack = GetNextAttackDelay( 0.5f );
 		return;
@@ -207,6 +220,7 @@ void CWeaponTurretKit::PrimaryAttack( void )
 
 	if( tr.vecPlaneNormal.z < TURRET_KIT_MIN_FLOOR_Z )
 	{
+		ZP_Trace( "ZPTURRET place refused by=%d slope=%.2f\n", idx, tr.vecPlaneNormal.z );
 		ClientPrint( m_pPlayer->pev, HUD_PRINTTALK, "Turrets need a flat surface" );
 		m_flNextPrimaryAttack = GetNextAttackDelay( 0.5f );
 		return;
@@ -257,6 +271,32 @@ void CWeaponTurretKit::PrimaryAttack( void )
 		// last kit placed: hold the arm animation, then WeaponIdle() retires
 		m_flTimeWeaponIdle = m_flNextSecondaryAttack = m_flNextPrimaryAttack = GetNextAttackDelay( 1.0f );
 	}
+}
+
+// Owner-side teardown: a turret belongs to the human who placed it, so when
+// that player is infected or dies the gun goes with them. ZPCleanupWorld
+// would otherwise only sweep it at the next round transition, leaving a live
+// turret shooting zombies for the rest of the round after its builder turned.
+void ZPRemoveTurretsOf( edict_t *pBuilder )
+{
+	if( !pBuilder )
+		return;
+
+	int removed = 0;
+	for( int i = gpGlobals->maxClients + 1; i < gpGlobals->maxEntities; i++ )
+	{
+		edict_t *ed = INDEXENT( i );
+		if( !ed || ed->free )
+			continue;
+		if( ZPTurretBuilder( ed ) != pBuilder )
+			continue;
+
+		UTIL_Remove( CBaseEntity::Instance( ed ) );
+		removed++;
+	}
+
+	if( removed )
+		ZP_Trace( "ZPTURRET removed %d turret(s) of builder=%d\n", removed, ENTINDEX( pBuilder ) );
 }
 
 void CWeaponTurretKit::WeaponIdle( void )

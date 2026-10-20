@@ -55,15 +55,19 @@ mv /tmp/zpmod_debug.log /tmp/zpmod_debug.log.prev 2>/dev/null || true
 # The backtrace and register dumps go to their own files as well as stdout, so
 # the frame list survives even if the terminal is cleared or the session is
 # interrupted before the output scrolls past.
-lldb -b -o \
-  "settings set target.process.stop-on-sharedlibrary-events false" \
+# NOTE: this lldb does NOT run -o commands that follow "run" once the target
+# stops at a crash: it prints the stop location and quits. Post-crash commands
+# must be passed with -k (--one-line-on-crash), which is what batch mode
+# provides for exactly this purpose.
+lldb -b \
+  -o "settings set target.process.stop-on-sharedlibrary-events false" \
   -o "process handle SIGSEGV -s true -n false -p true" \
   -o "process handle SIGBUS -s true -n false -p true" \
   -o "process handle SIGABRT -s true -n false -p true" \
   -o "run" \
-  -o "thread backtrace all -e true" \
-  -o "image lookup -a \$pc -v" \
-  -o "register read" \
+  -k "thread backtrace all -e true" \
+  -k "image lookup -a \$pc -v" \
+  -k "register read" \
   -o "quit" \
   -- ./xash3d -dedicated -port $PORT +map crossfire \
   2>&1 | tee /tmp/zpmod_lldb.log || true
