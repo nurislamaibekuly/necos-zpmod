@@ -194,6 +194,7 @@ int ZPFeatureInitialInfections(ZPRound* round, int connected);
 void ZPFeatureStartInfections(ZPRound* round, int* players, int count);
 void ZPFeatureRoundThink(ZPRound* round);
 void ZPFeatureForceEvent(int ev, bool immediate);
+bool ZPFeatureBlackoutActive(void);
 float ZPFeatureClawMultiplier(void);
 float ZPFeatureGravity(void);
 float ZPFeatureSpeedMultiplier(void);

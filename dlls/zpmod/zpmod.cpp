@@ -863,6 +863,11 @@ void ZPApplyZombieClass(edict_t* player)
     if (g_players[idx].adrenalineUntil > gpGlobals->time)
         player->v.maxspeed = speed * 1.3f + ZPFeatureSpeedMultiplier();
     player->v.gravity = gravity * ZPFeatureGravity();
+    if (ZPFeatureBlackoutActive()) {
+        // the class glow would light zombies up in the dark
+        player->v.renderfx = kRenderFxNone;
+        return;
+    }
     player->v.renderfx = kRenderFxGlowShell;
     ZMApplyGlow(player, cls, cls == ZM_CLASS_BOSS ? 80.0f : cls == ZM_CLASS_TANK ? 70.0f : 45.0f);
 }

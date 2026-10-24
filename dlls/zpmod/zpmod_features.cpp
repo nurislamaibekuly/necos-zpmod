@@ -14,8 +14,7 @@
 // infection is applied in ZPFeatureStartInfections and per-frame / hook
 // behaviour hooks through the rest of the ZP module.
 
-static float s_blackoutAt = 0.0f;      // when the BLACKOUT event triggers
-static float s_blackoutUntil = 0.0f;   // when the BLACKOUT event ends
+static bool s_blackoutOn = false;      // BLACKOUT lights currently applied
 static float s_heartbeatUntil = 0.0f;
 static int s_forcedEvent = -1;         // admin-forced event for the next round (-1 = random)  // last-human heartbeat cadence
 static const float kPlagueInterval = 20.0f;
@@ -59,8 +58,7 @@ void ZPFeatureInit(void) {
     g_round.plagueNextSpread = 0.0f;
     g_round.bossRound = false;
 
-    s_blackoutAt = 0.0f;
-    s_blackoutUntil = 0.0f;
+    s_blackoutOn = false;
 
     for (int i = 1; i <= gpGlobals->maxClients; i++) {
         g_players[i].steerMode = ZEV_NONE;
@@ -106,8 +104,7 @@ void ZPFeaturePreRound(ZPRound* round) {
     round->plagueNextSpread = gpGlobals->time + kPlagueInterval;
     round->roundDuration = ZPFeatureRoundDuration();
 
-    s_blackoutAt = 0.0f;
-    s_blackoutUntil = 0.0f;
+    s_blackoutOn = false;
     s_heartbeatUntil = 0.0f;
 
     for (int i = 1; i <= gpGlobals->maxClients; i++)
@@ -231,33 +228,32 @@ void ZPFeatureStartInfections(ZPRound* round, int* players, int count) {
     }
 }
 
+// true while the BLACKOUT lights are out (zombie glow is dropped so they stay hidden)
+bool ZPFeatureBlackoutActive(void) {
+    return s_blackoutOn;
+}
+
 // per-frame logic for the active round (plague spread, blackout, cleanup)
 void ZPFeatureRoundThink(ZPRound* round) {
     if (!round) return;
 
     if (round->state != RS_ACTIVE) {
         LIGHT_STYLE(0, "m");
-        s_blackoutAt = 0.0f;
-        s_blackoutUntil = 0.0f;
+        s_blackoutOn = false;
         s_heartbeatUntil = 0.0f;
         return;
     }
 
-    // BLACKOUT: sudden darkness for a 15s window partway through the round
+    // BLACKOUT: lights are out for the whole round, starting with the round
     if (round->eventType == ZEV_BLACKOUT) {
-        if (s_blackoutAt <= 0.0f)
-            s_blackoutAt = round->roundStartTime + RANDOM_FLOAT(45.0f, 150.0f);
-
-        if (gpGlobals->time >= s_blackoutAt && gpGlobals->time < s_blackoutAt + 15.0f) {
-            if (s_blackoutUntil < s_blackoutAt) {
-                s_blackoutUntil = s_blackoutAt + 15.0f;
-                UTIL_ClientPrintAll(HUD_PRINTCENTER, "BLACKOUT!\n");
-                LIGHT_STYLE(0, "a"); // "a" is full dark, "z" would be full bright
-            }
-        } else if (gpGlobals->time >= s_blackoutAt + 15.0f && s_blackoutUntil >= s_blackoutAt) {
-            s_blackoutUntil = 0.0f;
-            LIGHT_STYLE(0, "m");
+        if (!s_blackoutOn) {
+            s_blackoutOn = true;
+            UTIL_ClientPrintAll(HUD_PRINTCENTER, "BLACKOUT!\n");
+            LIGHT_STYLE(0, "a"); // "a" is full dark, "z" would be full bright
         }
+    } else if (s_blackoutOn) {
+        s_blackoutOn = false;
+        LIGHT_STYLE(0, "m");
     }
 
     // PLAGUE: infection spreads on its own while at least 2 humans remain
@@ -621,11 +617,8 @@ void ZPFeatureForceEvent(int ev, bool immediate) {
     }
 
     LIGHT_STYLE(0, "m");
-    s_blackoutAt = 0.0f;
-    s_blackoutUntil = 0.0f;
+    s_blackoutOn = false;
     g_round.eventType = ev < 0 ? ZEV_NONE : ev;
     g_round.suddenDeathActive = (g_round.eventType == ZEV_SUDDEN_DEATH);
-    if (g_round.eventType == ZEV_BLACKOUT)
-        s_blackoutAt = gpGlobals->time; // lights out right away
     g_round.roundDuration = ZPFeatureRoundDuration();
 }
