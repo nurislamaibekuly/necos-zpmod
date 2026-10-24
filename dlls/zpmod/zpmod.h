@@ -193,6 +193,7 @@ const char* ZPEventName(int ev);
 int ZPFeatureInitialInfections(ZPRound* round, int connected);
 void ZPFeatureStartInfections(ZPRound* round, int* players, int count);
 void ZPFeatureRoundThink(ZPRound* round);
+void ZPFeatureForceEvent(int ev, bool immediate);
 float ZPFeatureClawMultiplier(void);
 float ZPFeatureGravity(void);
 float ZPFeatureSpeedMultiplier(void);

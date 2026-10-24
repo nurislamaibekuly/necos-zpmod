@@ -346,7 +346,9 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
             "^2!help^7 ^2!auth^7 <pass> ^2!who^7 ^2!stats^7 ^2!top^7\n"
             "^1Admin:^7 !kick !ban !unban !slap !slay !heal !freeze !unfreeze\n"
             "^1Admin:^7 !tp !bring !zombie !human !noclip !god !map !endround !restart\n"
-            "^1Admin:^7 !bots <n> !addbot [n] !removebot [n]");
+            "^1Admin:^7 !bots <n> !addbot [n] !removebot [n]\n"
+            "^1Admin:^7 !event [name|list|off] [now] !armor <name> [n] !gravity [g] !say <msg>\n"
+            "^1Admin:^7 !infectall !cureall !slayall !healall !rr");
         return true;
     }
 
@@ -602,6 +604,101 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
     }
 
     if (!strcmp(cmd, "restart")) {
+        ZPRoundRestart();
+        ZPAdminMsg(sender, "^4[Admin] Round restarting...^7");
+        return true;
+    }
+
+    if (!strcmp(cmd, "event")) {
+        static const struct { const char* key; int ev; } events[] = {
+            { "gravity", ZEV_LOW_GRAVITY }, { "lowgravity", ZEV_LOW_GRAVITY },
+            { "blackout", ZEV_BLACKOUT }, { "onehit", ZEV_ONE_HIT },
+            { "damage", ZEV_DOUBLE_DAMAGE }, { "doubledamage", ZEV_DOUBLE_DAMAGE },
+            { "speed", ZEV_SPEED }, { "armor", ZEV_ARMOR },
+            { "spread", ZEV_DOUBLE_SPREAD }, { "doublespread", ZEV_DOUBLE_SPREAD },
+            { "suddendeath", ZEV_SUDDEN_DEATH }, { "sudden", ZEV_SUDDEN_DEATH },
+        };
+        const int numEvents = (int)(sizeof(events) / sizeof(events[0]));
+
+        if (argc < 2 || !strcmp(argv[1], "list")) {
+            ZPAdminMsg(sender, "^3Usage:^7 !event <name> [now] | !event off [now]");
+            ZPAdminMsg(sender, "^3Events:^7 gravity blackout onehit damage speed armor spread suddendeath");
+            return true;
+        }
+
+        bool now = argc >= 3 && (!strcmp(argv[2], "now") || !strcmp(argv[2], "1"));
+        int ev = -2;
+        if (!strcmp(argv[1], "off") || !strcmp(argv[1], "none")) {
+            ev = -1;
+        } else {
+            char key[32];
+            ZPAdminLower(key, sizeof(key), argv[1]);
+            for (int i = 0; i < numEvents; i++) {
+                if (!strcmp(key, events[i].key)) { ev = events[i].ev; break; }
+            }
+        }
+        if (ev == -2) { ZPAdminMsg(sender, "^1[Admin] Unknown event.^7 Try ^3!event list^7"); return true; }
+
+        ZPFeatureForceEvent(ev, now);
+        const char* name = ev < 0 ? "none" : ZPEventName(ev);
+        if (now)
+            UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] Event %s started by %s\n", name, STRING(sender->v.netname)));
+        else
+            ZPAdminMsg(sender, UTIL_VarArgs("^4[Admin]^7 Next round event: ^3%s^7", name));
+        return true;
+    }
+
+    if (!strcmp(cmd, "armor")) {
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !armor <name> [amount]"); return true; }
+        edict_t* t = ZPAdminFindPlayer(argv[1]);
+        if (!t) { ZPAdminMsg(sender, "^1[Admin] Player not found.^7"); return true; }
+
+        float amt = argc >= 3 ? (float)atof(argv[2]) : 100.0f;
+        if (amt < 0) amt = 0;
+        if (amt > 999) amt = 999;
+        t->v.armorvalue = amt;
+        return true;
+    }
+
+    if (!strcmp(cmd, "gravity")) {
+        float g = argc >= 2 ? (float)atof(argv[1]) : 1.0f;
+        if (g < 0.05f) g = 1.0f;
+        sender->v.gravity = g;
+        ZPAdminMsg(sender, UTIL_VarArgs("^2[Admin] Gravity %.2f^7", g));
+        return true;
+    }
+
+    if (!strcmp(cmd, "say") || !strcmp(cmd, "msg")) {
+        if (argc < 2) { ZPAdminMsg(sender, "^3Usage:^7 !say <message>"); return true; }
+        const char* raw = text + 1; // keep the original spacing of the message
+        while (*raw && *raw != ' ' && *raw != '\t') raw++;
+        while (*raw == ' ' || *raw == '\t') raw++;
+        UTIL_ClientPrintAll(HUD_PRINTCENTER, UTIL_VarArgs("%s\n", raw));
+        ZPAdminSayAll(UTIL_VarArgs("^1[Admin]^7 %s\n", raw));
+        return true;
+    }
+
+    if (!strcmp(cmd, "infectall") || !strcmp(cmd, "cureall") || !strcmp(cmd, "slayall") || !strcmp(cmd, "healall")) {
+        for (int i = 1; i <= gpGlobals->maxClients; i++) {
+            edict_t* t = INDEXENT(i);
+            if (!ZPIsPlayerConnected(t) || t->v.health <= 0) continue;
+            if (!strcmp(cmd, "infectall")) {
+                if (!ZPIsZombie(t)) ZPInfectPlayer(t, true);
+            } else if (!strcmp(cmd, "cureall")) {
+                if (!ZPIsHuman(t)) ZPMakeHuman(t);
+            } else if (!strcmp(cmd, "healall")) {
+                t->v.health = t->v.max_health > 0 ? t->v.max_health : 100.0f;
+            } else if (t != sender) {
+                CBasePlayer* tp = (CBasePlayer*)GET_PRIVATE(t);
+                if (tp && tp->IsAlive())
+                    tp->TakeDamage(VARS(INDEXENT(0)), VARS(INDEXENT(0)), 10000.0f, DMG_GENERIC);
+            }
+        }
+        UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] %s used by %s\n", cmd, STRING(sender->v.netname)));
+        return true;
+    }
+
+    if (!strcmp(cmd, "rr")) {
         ZPRoundRestart();
         ZPAdminMsg(sender, "^4[Admin] Round restarting...^7");
         return true;

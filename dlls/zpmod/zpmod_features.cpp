@@ -16,7 +16,8 @@
 
 static float s_blackoutAt = 0.0f;      // when the BLACKOUT event triggers
 static float s_blackoutUntil = 0.0f;   // when the BLACKOUT event ends
-static float s_heartbeatUntil = 0.0f;  // last-human heartbeat cadence
+static float s_heartbeatUntil = 0.0f;
+static int s_forcedEvent = -1;         // admin-forced event for the next round (-1 = random)  // last-human heartbeat cadence
 static const float kPlagueInterval = 20.0f;
 static const float kKillIconHold = 3.0f;        // seconds the streak icon stays solid
 static const float kKillIconFadeSpeed = 2.5f;   // alpha/s, the touch_fade speed argument
@@ -92,6 +93,10 @@ void ZPFeaturePreRound(ZPRound* round) {
     int ev = ZEV_NONE;
     if (RANDOM_LONG(1, 100) <= 20)
         ev = RANDOM_LONG(ZEV_LOW_GRAVITY, ZEV_SUDDEN_DEATH);
+    if (s_forcedEvent >= 0) {
+        ev = s_forcedEvent;
+        s_forcedEvent = -1;
+    }
     round->eventType = ev;
 
     round->eventAnnounced = gpGlobals->time;
@@ -232,9 +237,9 @@ void ZPFeatureRoundThink(ZPRound* round) {
 
     if (round->state != RS_ACTIVE) {
         LIGHT_STYLE(0, "m");
-s_blackoutAt = 0.0f;
-    s_blackoutUntil = 0.0f;
-    s_heartbeatUntil = 0.0f;
+        s_blackoutAt = 0.0f;
+        s_blackoutUntil = 0.0f;
+        s_heartbeatUntil = 0.0f;
         return;
     }
 
@@ -247,7 +252,7 @@ s_blackoutAt = 0.0f;
             if (s_blackoutUntil < s_blackoutAt) {
                 s_blackoutUntil = s_blackoutAt + 15.0f;
                 UTIL_ClientPrintAll(HUD_PRINTCENTER, "BLACKOUT!\n");
-                LIGHT_STYLE(0, "z");
+                LIGHT_STYLE(0, "a"); // "a" is full dark, "z" would be full bright
             }
         } else if (gpGlobals->time >= s_blackoutAt + 15.0f && s_blackoutUntil >= s_blackoutAt) {
             s_blackoutUntil = 0.0f;
@@ -606,4 +611,21 @@ void ZPFeaturePlayerDisconnect(edict_t* player) {
     g_players[idx].bossRoundStart = false;
     g_players[idx].killIconFadeAt = 0.0f;
     g_players[idx].killIconRemoveAt = 0.0f;
+}
+// admin: force an event. immediate applies it to the running round now,
+// otherwise it is used for the next round. ev < 0 clears a pending forced event.
+void ZPFeatureForceEvent(int ev, bool immediate) {
+    if (!immediate || g_round.state != RS_ACTIVE) {
+        s_forcedEvent = ev;
+        return;
+    }
+
+    LIGHT_STYLE(0, "m");
+    s_blackoutAt = 0.0f;
+    s_blackoutUntil = 0.0f;
+    g_round.eventType = ev < 0 ? ZEV_NONE : ev;
+    g_round.suddenDeathActive = (g_round.eventType == ZEV_SUDDEN_DEATH);
+    if (g_round.eventType == ZEV_BLACKOUT)
+        s_blackoutAt = gpGlobals->time; // lights out right away
+    g_round.roundDuration = ZPFeatureRoundDuration();
 }
