@@ -1,0 +1,367 @@
+diff --git a/cfg/addons/yapb/conf/yapb.cfg b/cfg/addons/yapb/conf/yapb.cfg
+index ff45847..9daed46 100644
+--- a/cfg/addons/yapb/conf/yapb.cfg
++++ b/cfg/addons/yapb/conf/yapb.cfg
+@@ -475,7 +475,7 @@ yb_kick_after_player_connect "1"
+ // ---
+ // Default: "9", Min: "0", Max: "32"
+ // 
+-yb_quota "9"
++yb_quota "4"
+ 
+ //
+ // Specifies the type of quota.
+diff --git a/inc/engine.h b/inc/engine.h
+index 9d88c9a..bf458b9 100644
+--- a/inc/engine.h
++++ b/inc/engine.h
+@@ -405,6 +405,10 @@ public:
+       if (isNullEntity (ent)) {
+          return Team::Unassigned;
+       }
++      // zombie plague publishes the role in the "team" userinfo key
++      if (is (GameFlags::HalfLife) && is (GameFlags::ZombieMod)) {
++         return getZombiePlagueTeam (ent);
++      }
+       // true (non-teamplay) half-life deathmatch never sends a TeamInfo message
+       // for a normal spawn, so client.team stays 0 for every player forever.
+       // give each player a unique "team" here so bots treat one another (and
+@@ -420,9 +424,22 @@ public:
+       if (isNullEntity (ent)) {
+          return Team::Unassigned;
+       }
++      if (is (GameFlags::HalfLife) && is (GameFlags::ZombieMod)) {
++         return getZombiePlagueTeam (ent);
++      }
+       return util.getClient (indexOfPlayer (ent)).team2;
+    }
+ 
++   // maps the mod's "team" userinfo (zombie/human/spectator) to bot teams
++   int getZombiePlagueTeam (edict_t *ent) const {
++      const char *teamKey = engfuncs.pfnInfoKeyValue (engfuncs.pfnGetInfoKeyBuffer (ent), "team");
++
++      if (teamKey != nullptr && strcmp (teamKey, "zombie") == 0) {
++         return Team::Terrorist;
++      }
++      return Team::CT;
++   }
++
+    // get real gamedll team (matches gamedll indices)
+    int getPlayerTeamGame (edict_t *ent) const {
+       return getRealPlayerTeam (ent) + 1;
+diff --git a/inc/yapb.h b/inc/yapb.h
+index 4e04dbb..faa5dad 100644
+--- a/inc/yapb.h
++++ b/inc/yapb.h
+@@ -529,6 +529,8 @@ private:
+    void findValidNode ();
+    void setPathOrigin ();
+    void fireWeapons ();
++   void zpTactics ();
++   bool zpUseTool (const char *weapon, const Vector &target, float holdTime);
+    void doFireWeapons ();
+    void handleWeapons (float distance, int index, int id, int choosen);
+    void handleHLWeapons (float distance, int id, int choosen);
+@@ -644,6 +646,12 @@ public:
+    float m_spawnTime {}; // time this bot spawned
+    float m_timeTeamOrder {}; // time of last radio command
+    float m_slowFrameTimestamp {}; // time to per-second think
++   float m_zpToolTime {}; // zombie plague tool phase deadline
++   float m_zpToolCooldown {}; // next zombie plague tool use
++   float m_zpToolHold {}; // how long to hold attack for the current tool
++   int m_zpToolPhase {}; // zombie plague tool state: 0 idle, 1 draw, 2 hold, 3 release
++   const char *m_zpToolWeapon {}; // weapon classname being used
++   Vector m_zpToolTarget {}; // where the tool is aimed
+    float m_nextBuyTime {}; // next buy time
+    float m_checkDarkTime {}; // check for darkness time
+    float m_preventFlashing {}; // bot turned away from flashbang
+diff --git a/src/botlib.cpp b/src/botlib.cpp
+index 4f61159..6c24262 100644
+--- a/src/botlib.cpp
++++ b/src/botlib.cpp
+@@ -3283,6 +3283,7 @@ void Bot::update () {
+       }
+    }
+ 
++   zpTactics ();
+    runMovement ();
+ }
+ 
+@@ -4491,6 +4492,10 @@ float Bot::getShiftSpeed () {
+ void Bot::refreshCreatureStatus (char *infobuffer) {
+    // if bot is on infected team, assume he is a creature
+    if (game.is (GameFlags::ZombieMod)) {
++      // the mod changes roles mid-round, keep the bot's team in sync
++      if (game.is (GameFlags::HalfLife)) {
++         m_team = game.getPlayerTeam (ent ());
++      }
+       static StringRef zmInfectedTeam (conf.fetchCustom ("ZMInfectedTeam"));
+ 
+       // by default infected team is terrorists
+diff --git a/src/combat.cpp b/src/combat.cpp
+index 49cf156..d478eda 100644
+--- a/src/combat.cpp
++++ b/src/combat.cpp
+@@ -425,12 +425,21 @@ bool Bot::lookupEnemies () {
+       // ignore shielded enemies, while we have real one
+       edict_t *shieldEnemy = nullptr;
+ 
+-      if (cv_attack_monsters) {
++      if (cv_attack_monsters || (game.is (GameFlags::ZombieMod) && m_isCreature)) {
+          // search the world for monsters...
+          for (const auto &interesting : gameState.getInterestingEntities ()) {
+             if (!game.isMonsterEntity (interesting)) {
+                continue;
+             }
++            const bool isTurret = interesting->v.classname.str () == "zp_turret";
++
++            // only zombies go for turrets, and only the ones that are built and alive
++            if (isTurret && (!m_isCreature || interesting->v.health <= 0.0f || interesting->v.solid == SOLID_NOT)) {
++               continue;
++            }
++            else if (!isTurret && !cv_attack_monsters) {
++               continue;
++            }
+ 
+             // check the engine PVS
+             if (cv_use_engine_pvs_check && !game.checkVisibility (interesting, set)) {
+@@ -498,7 +507,7 @@ bool Bot::lookupEnemies () {
+       }
+    }
+ 
+-   if (newEnemy != nullptr && (game.isPlayerEntity (newEnemy) || (cv_attack_monsters && game.isMonsterEntity (newEnemy)))) {
++   if (newEnemy != nullptr && (game.isPlayerEntity (newEnemy) || ((cv_attack_monsters || m_isCreature) && game.isMonsterEntity (newEnemy)))) {
+       bots.setCanPause (true);
+ 
+       m_aimFlags |= AimFlags::Enemy;
+@@ -1528,6 +1537,10 @@ void Bot::doFireWeapons () {
+ }
+ 
+ void Bot::fireWeapons () {
++   // a zombie plague tool (grenade, turret kit) owns the weapon slot right now
++   if (m_zpToolPhase != 0) {
++      return;
++   }
+    // this function will return true if weapon was fired, false otherwise
+ 
+    // do not handle this if with grenade, as it's done it throw grenade task
+@@ -3116,6 +3129,144 @@ void Bot::selectWeaponById (int id) {
+    issueCommand (prop.classname.chars ());
+ }
+ 
++bool Bot::zpUseTool (const char *weapon, const Vector &target, float holdTime) {
++   // drives the mod's custom weapons: select, aim, hold attack (pin pull), release (throw/place)
++   const float now = game.time ();
++
++   auto aimAt = [&] () {
++      Vector angles = (target - getEyesPos ()).angles ();
++      angles.x = -angles.x;
++      angles.clampAngles ();
++
++      pev->v_angle = angles;
++      m_moveAngles = angles;
++      m_idealAngles = angles;
++      m_moveSpeed = m_strafeSpeed = 0.0f;
++   };
++
++   switch (m_zpToolPhase) {
++   case 0:
++      issueCommand (weapon);
++      m_zpToolPhase = 1;
++      m_zpToolTime = now + 0.9f; // draw animation
++      return true;
++
++   case 1:
++      aimAt ();
++
++      if (now >= m_zpToolTime) {
++         m_zpToolPhase = 2;
++         m_zpToolTime = now + holdTime;
++      }
++      return true;
++
++   case 2:
++      aimAt ();
++      pev->button |= IN_ATTACK;
++
++      if (now >= m_zpToolTime) {
++         m_zpToolPhase = 3;
++         m_zpToolTime = now + 0.7f; // release, let the throw animation play out
++      }
++      return true;
++
++   default:
++      aimAt ();
++      pev->button &= ~IN_ATTACK;
++
++      if (now >= m_zpToolTime) {
++         m_zpToolPhase = 0;
++         m_zpToolCooldown = now + 5.0f;
++         m_zpToolWeapon = nullptr;
++         selectWeaponById (selectHLCombatWeapon (512.0f)); // back to the gun
++      }
++      return true;
++   }
++}
++
++void Bot::zpTactics () {
++   // zombie plague roles: zombies throw infection bombs, humans build turrets and throw
++   // molotovs / freeze bombs; the rest (chase, flee, shoot, claw) is the regular bot logic
++   if (!m_isAlive || !game.is (GameFlags::HalfLife) || !game.is (GameFlags::ZombieMod)) {
++      m_zpToolPhase = 0;
++      return;
++   }
++   const float now = game.time ();
++   const auto weapons = pev->weapons;
++
++   // finish whatever we've started
++   if (m_zpToolPhase != 0 && m_zpToolWeapon) {
++      zpUseTool (m_zpToolWeapon, m_zpToolTarget, m_zpToolHold);
++      return;
++   }
++   m_zpToolPhase = 0;
++
++   if (m_zpToolCooldown > now || m_blindTime > now) {
++      return;
++   }
++   const bool hasEnemy = !game.isNullEntity (m_enemy) && game.isAliveEntity (m_enemy) && game.isPlayerEntity (m_enemy)
++      && (m_states & Sense::SeeingEnemy);
++
++   const float distance = hasEnemy ? m_enemy->v.origin.distance (pev->origin) : 0.0f;
++
++   auto begin = [&] (const char *weapon, const Vector &target, float hold) {
++      m_zpToolWeapon = weapon;
++      m_zpToolTarget = target;
++      m_zpToolHold = hold;
++      zpUseTool (weapon, target, hold);
++   };
++
++   if (m_isCreature) {
++      // infection bomb: from a distance, the blast is wider than the claws reach
++      if (hasEnemy && (weapons & cr::bit (18)) && distance > 260.0f && distance < 700.0f && rg.chance (60)) {
++         begin ("weapon_infectionbomb", m_enemy->v.origin + Vector (0.0f, 0.0f, 24.0f), 0.5f);
++      }
++      return;
++   }
++
++   if (hasEnemy && distance > 250.0f && distance < 800.0f) {
++      // freeze the ones about to catch us, burn the ones still far away
++      if ((weapons & cr::bit (17)) && distance < 500.0f) {
++         begin ("weapon_freezebomb", m_enemy->v.origin + Vector (0.0f, 0.0f, 16.0f), 0.5f);
++      }
++      else if (weapons & cr::bit (16)) {
++         begin ("weapon_molotov", m_enemy->v.origin + Vector (0.0f, 0.0f, 16.0f), 0.5f);
++      }
++      return;
++   }
++
++   // quiet moment, build the turret on the floor right in front of us
++   if (!hasEnemy && (weapons & cr::bit (19)) && m_seeEnemyTime + 3.0f < now) {
++      // don't pile turrets on top of each other, a spot is covered once one stands nearby
++      bool covered = false;
++
++      game.searchEntities (pev->origin, 700.0f, [&] (edict_t *e) {
++         if (e->v.classname.str () == "zp_turret") {
++            covered = true;
++            return EntitySearchResult::Break;
++         }
++         return EntitySearchResult::Continue;
++      });
++
++      if (covered) {
++         m_zpToolCooldown = now + 3.0f;
++         return;
++      }
++
++      // build facing where the zombies came from, so the turret covers the approach
++      Vector facing = pev->v_angle;
++
++      if (!m_lastEnemyOrigin.empty ()) {
++         facing = (m_lastEnemyOrigin - pev->origin).angles ();
++         facing.x = 0.0f;
++      }
++      const Vector forward = Vector (0.0f, facing.y, 0.0f).forward ();
++      const Vector floor = pev->origin + forward * 80.0f - Vector (0.0f, 0.0f, 30.0f);
++
++      begin ("weapon_turret", floor, 0.1f);
++   }
++}
++
+ void Bot::checkBurstMode (float distance) {
+    // this function checks burst mode, and switch it depending distance to to enemy.
+ 
+diff --git a/src/engine.cpp b/src/engine.cpp
+index 7b335df..8d3318a 100644
+--- a/src/engine.cpp
++++ b/src/engine.cpp
+@@ -929,7 +929,8 @@ void Game::constructHLBinaryName (StringArray &libs) {
+       libs.push ("libhl" + suffix);
+    }
+    else {
+-      // Standard: "mp" and "cs" with suffix
++      // the zombie plague mod is installed next to the engine stock hl library
++      libs.push ("zpserver" + suffix);
+       libs.push ("hl" + suffix);
+    }
+ }
+@@ -1206,6 +1207,17 @@ bool Game::postload () {
+ void Game::applyGameModes () {
+    // half-life deathmatch / teamplay
+    if (is (GameFlags::HalfLife)) {
++      // this mod ships its own zombie plague implementation, and the "team"
++      // userinfo is the authoritative human/zombie role
++      static ConVarRef zp_active ("zp_turret_damage");
++
++      if (zp_active.exists ()) {
++         m_gameFlags |= GameFlags::ZombieMod;
++         m_gameFlags &= ~GameFlags::FreeForAll;
++         return;
++      }
++      m_gameFlags &= ~GameFlags::ZombieMod;
++
+       static ConVarRef mp_teamplay ("mp_teamplay");
+ 
+       if (!mp_teamplay.exists () || mp_teamplay.value () <= 0.0f) {
+@@ -2119,7 +2131,11 @@ void GameState::updateInterestingEntities () {
+          m_interestingEntities.push (e);
+       }
+ 
+-      if (cv_attack_monsters && game.isMonsterEntity (e)) {
++      // zombies break the turrets humans build
++      if (game.is (GameFlags::ZombieMod) && classname == "zp_turret") {
++         m_interestingEntities.push (e);
++      }
++      else if (cv_attack_monsters && game.isMonsterEntity (e)) {
+          m_interestingEntities.push (e);
+       }
+ 
+diff --git a/src/manager.cpp b/src/manager.cpp
+index 518b454..8c7fb7e 100644
+--- a/src/manager.cpp
++++ b/src/manager.cpp
+@@ -11,7 +11,7 @@ ConVar cv_autovacate ("autovacate", "1", "Kicks bots to automatically make room
+ ConVar cv_autovacate_keep_slots ("autovacate_keep_slots", "1", "How many slots the autovacate feature should keep for human players.", true, 1.0f, 8.0f);
+ ConVar cv_kick_after_player_connect ("kick_after_player_connect", "1", "Kicks the bot immediately when a human player joins the server (yb_autovacate must be enabled).");
+ 
+-ConVar cv_quota ("quota", "9", "Specifies the number of bots to be added to the game.", true, 0.0f, static_cast <float> (kGameMaxPlayers));
++ConVar cv_quota ("quota", "4", "Specifies the number of bots to be added to the game.", true, 0.0f, static_cast <float> (kGameMaxPlayers));
+ ConVar cv_quota_mode ("quota_mode", "normal", "Specifies the type of quota.\nAllowed values: 'normal', 'fill', and 'match'.\nIf 'fill', the server will adjust bots to keep N players in the game, where N is yb_quota.\nIf 'match', the server will maintain a 1:N ratio of humans to bots, where N is yb_quota_match.", false);
+ ConVar cv_quota_match ("quota_match", "0", "Number of players to match if yb_quota_mode is set to 'match'.", true, 0.0f, static_cast <float> (kGameMaxPlayers));
+ ConVar cv_think_fps ("think_fps", "30.0", "Specifies how many times per second the bot code will run.", true, 24.0f, 90.0f);
+diff --git a/src/support.cpp b/src/support.cpp
+index b12ede1..f5f38ad 100644
+--- a/src/support.cpp
++++ b/src/support.cpp
+@@ -272,6 +272,12 @@ void BotSupport::updateClients () {
+             client.team2 = Team::Unassigned;
+          }
+ 
++         // zombie plague never sends TeamInfo either; the "team" userinfo is the role, and it
++         // changes on infection, so refresh it every frame for all friend/enemy checks
++         if (game.is (GameFlags::HalfLife) && game.is (GameFlags::ZombieMod)) {
++            client.team = client.team2 = game.getZombiePlagueTeam (player);
++         }
++
+          if (game.isAliveEntity (player)) {
+             client.flags |= ClientFlags::Alive;
+          }

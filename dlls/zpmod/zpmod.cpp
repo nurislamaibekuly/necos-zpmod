@@ -496,14 +496,11 @@ static bool ZPLightstyleWantsFloat(void) {
 // how often the red vision fade is re-pinned while someone stays infected
 static const float ZP_VISION_REFRESH = 1.0f;
 
-// Parabot classifies players as friend or foe from the "team" userinfo key:
-// its pfnSetClientKeyValue wrapper flips valveTeamPlayMode on and registers
-// every value it has seen the moment the mod writes a "team" key. Until that
-// happens it runs in deathmatch mode and every player -- including the bots'
-// own teammates -- reads back as an enemy. The engine returns "" for a key
-// that was never written, which is why the fallback below treats anything
-// except an explicit zombie/spectator code as human; role changes always run
-// ZPSyncZombieState, which calls this, so the key tracks v.team from spawn on.
+// Bots classify players as friend or foe from the "team" userinfo key. The
+// engine returns "" for a key that was never written, which is why the
+// fallback below treats anything except an explicit zombie/spectator code as
+// human; role changes always run ZPSyncZombieState, which calls this, so the
+// key tracks v.team from spawn on.
 static const char* ZPTeamKeyName(int team) {
     if (team == RoleToInt(ROLE_ZOMBIE))    return "zombie";
     if (team == RoleToInt(ROLE_SPECTATOR)) return "spectator";
@@ -2821,6 +2818,7 @@ void ZPRoundThink(ZPRound* round) {
             round->state = RS_ACTIVE;
             round->roundStartTime = gpGlobals->time;
             round->lastHumanAnnounced = false;
+            round->twentySecWarned = false;
 
             ZPFreezePlayers(false);
             ZPRoundStartAmbient();
@@ -2873,6 +2871,18 @@ void ZPRoundThink(ZPRound* round) {
     // if round active
     else if (round->state == RS_ACTIVE) {
         ZPSupplyBoxThink();
+
+        // 20 seconds left on the round clock
+        if (!round->twentySecWarned
+            && gpGlobals->time >= round->roundStartTime + round->roundDuration - 20.0f) {
+            round->twentySecWarned = true;
+
+            for (int i = 1; i <= gpGlobals->maxClients; i++) {
+                edict_t* ed = INDEXENT(i);
+                if (!ZPIsPlayerConnected(ed) || ed->v.health <= 0) continue;
+                CLIENT_COMMAND(ed, "spk \"zpmod/vox/20secremain.wav\"\n");
+            }
+        }
 
         int humans = 0, zombies = 0;
         ZPCountTeams(humans, zombies);
@@ -3090,6 +3100,7 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("zpmod/win_zombi_ambient_02.wav");
     PRECACHE_SOUND("zpmod/win_zombi_ambient_03.wav");
     PRECACHE_SOUND("zpmod/round_draw.wav");
+    PRECACHE_SOUND("zpmod/vox/20secremain.wav");
     PRECACHE_SOUND("zpmod/vox/ten.wav");
     PRECACHE_SOUND("zpmod/vox/nine.wav");
     PRECACHE_SOUND("zpmod/vox/eight.wav");

@@ -89,6 +89,7 @@ struct ZPRound {
     float plagueNextSpread;
     bool bossRound;
     bool ambientPlaying;
+    bool twentySecWarned; // 20 seconds remain voice line already played this round
 };
 
 #define ZPMAPVOTE_OPTIONS 3
@@ -226,9 +227,8 @@ bool ZPIsZombie(edict_t* player);
 void ZPSyncZombieState(edict_t* player);
 
 // Keeps the "team" userinfo key in sync with v.team ("human"/"zombie"/
-// "spectator"). Parabot's engine wrapper turns on team-play classification as
-// soon as the mod writes a "team" key once; without it every bot treats every
-// other player as an enemy.
+// "spectator"). Bot engines classify players as friend or foe from this key;
+// without it every bot treats every other player as an enemy.
 void ZPSyncTeamKey(edict_t* player);
 
 // Re-applies the model a player's current role requires, if v.modelindex does

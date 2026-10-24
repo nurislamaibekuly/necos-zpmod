@@ -458,6 +458,12 @@ int CBasePlayer::TakeDamage( entvars_t *pevInflictor, entvars_t *pevAttacker, fl
 	// go take the damage first
 	CBaseEntity *pAttacker = CBaseEntity::Instance( pevAttacker );
 
+	// zpmod: same role never hurts same role, whichever gamerules are active
+	if( pAttacker && pAttacker != this && pAttacker->IsPlayer()
+		&& ZPIsPlayerConnected( edict() ) && ZPIsPlayerConnected( pAttacker->edict() )
+		&& ZPIsZombie( edict() ) == ZPIsZombie( pAttacker->edict() ) )
+		return 0;
+
 	if( !g_pGameRules->FPlayerCanTakeDamage( this, pAttacker ) )
 	{
 		// Refuse the damage

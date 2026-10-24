@@ -30,6 +30,7 @@
 #include	"voice_gamemgr.h"
 #include	"hltv.h"
 #include	"trains.h"
+#include	"zpmod/zpmod.h"
 
 extern DLL_GLOBAL CGameRules *g_pGameRules;
 extern DLL_GLOBAL BOOL	g_fGameOver;
@@ -512,6 +513,16 @@ float CHalfLifeMultiplay::FlPlayerFallDamage( CBasePlayer *pPlayer )
 //=========================================================
 BOOL CHalfLifeMultiplay::FPlayerCanTakeDamage( CBasePlayer *pPlayer, CBaseEntity *pAttacker )
 {
+	// zpmod: no friendly fire, humans can't hurt humans and zombies can't hurt zombies
+	if( pPlayer && pAttacker && pAttacker != pPlayer && pAttacker->IsPlayer() )
+	{
+		edict_t *pVictimEd = pPlayer->edict();
+		edict_t *pAttackerEd = pAttacker->edict();
+
+		if( ZPIsPlayerConnected( pVictimEd ) && ZPIsPlayerConnected( pAttackerEd )
+			&& ZPIsZombie( pVictimEd ) == ZPIsZombie( pAttackerEd ) )
+			return FALSE;
+	}
 	return TRUE;
 }
 

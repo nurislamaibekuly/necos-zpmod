@@ -30,6 +30,21 @@ static char g_allowNames[ZPADMIN_MAX_ALLOW][32];
 static int g_allowCount = 0;
 static bool g_authed[33] = { false };
 
+// YaPB registers yb_quota, Parabot registers NumBots. Pick whichever bot
+// dll is actually loaded so the chat commands keep working with either.
+static bool ZPBotAdminIsYaPB(void) {
+    return g_engfuncs.pfnCVarGetPointer("yb_quota") != NULL;
+}
+
+static int ZPBotAdminCount(void) {
+    int live = 0;
+    for (int i = 1; i <= gpGlobals->maxClients; i++) {
+        edict_t* e = INDEXENT(i);
+        if (ZPIsPlayerConnected(e) && (e->v.flags & FL_FAKECLIENT)) live++;
+    }
+    return live;
+}
+
 static void ZPAdminLower(char* out, int outSize, const char* in) {
     if (!out || !in) return;
     int i = 0;
@@ -592,13 +607,9 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
         return true;
     }
 
-    // ---- bot management (Parabot) ----
+    // ---- bot management (YaPB, or Parabot if that dll is loaded) ----
     if (!strcmp(cmd, "bots") || !strcmp(cmd, "botcount")) {
-        int live = 0;
-        for (int i = 1; i <= gpGlobals->maxClients; i++) {
-            edict_t* e = INDEXENT(i);
-            if (ZPIsPlayerConnected(e) && (e->v.flags & FL_FAKECLIENT)) live++;
-        }
+        int live = ZPBotAdminCount();
 
         if (argc < 2) {
             ZPAdminMsg(sender, UTIL_VarArgs("^4[Admin]^7 %d bot(s) in game. ^3!bots <n>^7 to set.", live));
@@ -607,7 +618,13 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
 
         int n = atoi(argv[1]);
         if (n < 0) n = 0;
-        SERVER_COMMAND(UTIL_VarArgs("pb_botcount %d\n", n));
+        if (n > 32) n = 32;
+
+        if (ZPBotAdminIsYaPB())
+            SERVER_COMMAND(UTIL_VarArgs("yb_quota %d\n", n));
+        else
+            SERVER_COMMAND(UTIL_VarArgs("pb_botcount %d\n", n));
+
         UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] Bot count set to %d by %s\n", n, STRING(sender->v.netname)));
         return true;
     }
@@ -616,7 +633,15 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
         int n = argc >= 2 ? atoi(argv[1]) : 1;
         if (n < 1) n = 1;
         if (n > 32) n = 32;
-        SERVER_COMMAND(UTIL_VarArgs("pb_addbot %d\n", n));
+
+        if (ZPBotAdminIsYaPB()) {
+            int target = ZPBotAdminCount() + n;
+            if (target > 32) target = 32;
+            SERVER_COMMAND(UTIL_VarArgs("yb_quota %d\n", target));
+        }
+        else {
+            SERVER_COMMAND(UTIL_VarArgs("pb_addbot %d\n", n));
+        }
         UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] Adding %d bot(s) (%s)\n", n, STRING(sender->v.netname)));
         return true;
     }
@@ -625,7 +650,15 @@ bool ZPAdminCommand(edict_t* sender, const char* text) {
         int n = argc >= 2 ? atoi(argv[1]) : 1;
         if (n < 1) n = 1;
         if (n > 32) n = 32;
-        SERVER_COMMAND(UTIL_VarArgs("pb_removebot %d\n", n));
+
+        if (ZPBotAdminIsYaPB()) {
+            int target = ZPBotAdminCount() - n;
+            if (target < 0) target = 0;
+            SERVER_COMMAND(UTIL_VarArgs("yb_quota %d\n", target));
+        }
+        else {
+            SERVER_COMMAND(UTIL_VarArgs("pb_removebot %d\n", n));
+        }
         UTIL_ClientPrintAll(HUD_PRINTNOTIFY, UTIL_VarArgs("[Admin] Removing %d bot(s) (%s)\n", n, STRING(sender->v.netname)));
         return true;
     }

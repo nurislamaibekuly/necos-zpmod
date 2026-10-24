@@ -45,7 +45,11 @@ project (HLSDK-PORTABLE)
 ################\
 option(BUILD_CLIENT "Build client dll" ON)
 option(BUILD_SERVER "Build server dll" ON)
-option(BUILD_PARABOT "Build Parabot bots dll (requires BUILD_SERVER)" ON)
+# backwards compatibility with the old Parabot switch
+if(DEFINED BUILD_PARABOT AND NOT DEFINED BUILD_YAPB)
+	set(BUILD_YAPB "${BUILD_PARABOT}" CACHE BOOL "Build YaPB bots dll (requires BUILD_SERVER)" FORCE)
+endif()
+option(BUILD_YAPB "Build YaPB bots dll (requires BUILD_SERVER)" ON)
 option(LTO "Enable interprocedural optimization" OFF)
 option(POLLY "Enable pollyhedral optimization" OFF)
 option(ANDROID_APK "Enable APK styled deploy" OFF)
@@ -220,9 +224,50 @@ if(BUILD_SERVER)
 	message(STATUS "Building server enabled")
 	add_subdirectory(dlls)
 
-	if(BUILD_PARABOT)
-		message(STATUS "Building Parabot enabled")
-		add_subdirectory(external/parabot)
+	if(BUILD_YAPB)
+		message(STATUS "Building YaPB enabled")
+
+		# The upstream fork knows nothing about this mod. Carry the small ZP
+		# integration (zpserver loading, team userinfo, creature refresh) as a
+		# patch instead of committing a modified third-party tree.
+		find_package(Git QUIET)
+		if(NOT GIT_FOUND)
+			message(FATAL_ERROR "git is required to apply the YaPB patch")
+		endif()
+
+		set(YAPB_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/patches/yapb-zp.patch")
+		execute_process(
+			COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}/external/yapb" apply --check "${YAPB_PATCH}"
+			RESULT_VARIABLE YAPB_PATCH_CHECK
+			OUTPUT_QUIET ERROR_QUIET)
+
+		if(YAPB_PATCH_CHECK EQUAL 0)
+			execute_process(
+				COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}/external/yapb" apply "${YAPB_PATCH}"
+				RESULT_VARIABLE YAPB_PATCH_APPLY)
+			if(NOT YAPB_PATCH_APPLY EQUAL 0)
+				message(FATAL_ERROR "Failed to apply ${YAPB_PATCH}")
+			endif()
+			message(STATUS "Applied YaPB ZP patch")
+		else()
+			# already applied (or the tree was edited on top of it)
+			file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/yapb/src/engine.cpp" YAPB_ENGINE_SOURCE)
+			string(FIND "${YAPB_ENGINE_SOURCE}" "zpserver" YAPB_PATCH_MARKER)
+			if(YAPB_PATCH_MARKER EQUAL -1)
+				message(FATAL_ERROR
+					"external/yapb does not have the ZP patch and ${YAPB_PATCH} does not apply cleanly. "
+					"Reset the submodule (git submodule update --init --recursive --force external/yapb) and reconfigure.")
+			endif()
+		endif()
+
+		# YaPB installs into ${GAME_DIR}/${SERVER_INSTALL_DIR}; make that the
+		# same directory as the mod dll and ship its default configuration.
+		set(GAME_DIR "${GAMEDIR}")
+		add_subdirectory(external/yapb)
+
+		install(DIRECTORY external/yapb/cfg/addons/yapb/
+			DESTINATION "${GAMEDIR}/addons/yapb"
+			USE_SOURCE_PERMISSIONS)
 	endif()
 endif()
 
