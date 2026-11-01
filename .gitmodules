@@ -3,4 +3,4 @@
 	url = https://github.com/FWGS/freevgui.git
 [submodule "external/yapb"]
 	path = external/yapb
-	url = https://github.com/hahayoutookind/yapb.git
+	url = https://github.com/nurislamaibekuly/yapb-for-necos-zpmod.git
