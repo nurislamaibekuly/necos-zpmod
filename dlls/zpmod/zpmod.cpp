@@ -1005,15 +1005,16 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
     // red infection burst — heavier for the boss
     UTIL_ParticleEffect(pPlayer->pev->origin + Vector(0, 0, 32), Vector(0, 0, 96), 235, g_players[idx].ZMClass == ZM_CLASS_BOSS ? 60 : 30);
 
+    player->v.team = RoleToInt(ROLE_ZOMBIE);
+
     ZP_Trace("ZPINFECT pre-strip by=%d weapons=0x%X\n", idx, (unsigned int)player->v.weapons);
     pPlayer->RemoveAllItems(false);
     pPlayer->GiveNamedItem("weapon_crowbar");
-    pPlayer->SelectItem("weapon_crowbar");
     // infection bomb: zombies only, one per infection
     pPlayer->GiveNamedItem("weapon_infectionbomb");
+    pPlayer->SelectItem("weapon_crowbar");
     ZP_Trace("ZPINFECT post by=%d weapons=0x%X\n", idx, (unsigned int)player->v.weapons);
 
-    player->v.team = RoleToInt(ROLE_ZOMBIE);
     // the claw/bomb viewmodels are class specific and get attached by the
     // weapons themselves (CCrowbar::Deploy, CWeaponInfectionBomb::ViewModelPath)
     pPlayer->pev->pain_finished = gpGlobals->time;
@@ -2141,7 +2142,8 @@ void ZPPlayerThink(edict_t* player) {
         // idle is sent once per swing rather than every server frame. The
         // infectionbomb does not need this: it is a real weapon and its
         // ItemPostFrame() sends its own idle clip.
-        if (FClassnameIs(pPlayer->pev, "weapon_crowbar") &&
+        if (pPlayer->m_pActiveItem &&
+            FClassnameIs(pPlayer->m_pActiveItem->pev, "weapon_crowbar") &&
             pPlayer->pev->weaponanim != ZMCLAW_IDLE &&
             gpGlobals->time >= g_players[idx].nextClawAnim)
         {

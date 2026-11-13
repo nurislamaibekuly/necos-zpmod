@@ -842,7 +842,9 @@ void CZPThrowGrenade::ItemPostFrame( void )
 	// returns a hard 0.0f on the server and the weapon's own m_flTimeWeaponIdle
 	// is a *countdown* decremented in CBasePlayer::PostThink. A wall-clock
 	// stamp is the only thing that survives a server frame loop here.
-	if( m_pPlayer->pev->weaponanim == IdleAnim() && gpGlobals->time >= m_flNextIdleSound )
+	if( !(m_pPlayer->pev->flags & FL_FAKECLIENT) &&
+	    m_pPlayer->pev->weaponanim == IdleAnim() &&
+	    gpGlobals->time >= m_flNextIdleSound )
 	{
 		PlayIdleSound();
 		m_flNextIdleSound = gpGlobals->time + UTIL_SharedRandomFloat( m_pPlayer->random_seed, 1.2f, 2.4f );
