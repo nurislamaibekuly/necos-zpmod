@@ -4162,7 +4162,9 @@ int CBasePlayer::AddPlayerItem( CBasePlayerItem *pItem )
 
 	pInsert = m_rgpPlayerItems[pItem->iItemSlot()];
 
-	if (ZPIsZombie(this->edict())) {
+	if (ZPIsZombie(this->edict()) &&
+		!FClassnameIs(pItem->pev, "weapon_crowbar") &&
+		!FClassnameIs(pItem->pev, "weapon_infectionbomb")) {
         return FALSE; // zombies can’t have weapons bitch
     }
 
