@@ -975,13 +975,25 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
             EMIT_SOUND(player, CHAN_VOICE, "zpmod/coming_2.wav", 1.0, ATTN_NORM);
             EMIT_SOUND(player, CHAN_BODY, "zpmod/human_death_2.wav", 1.0, ATTN_NORM);
         }
+
+        // CSMoE-style global infection cue, rate-limited so simultaneous turns never stack
+        static float s_lastGlobalComingTime = -10.0f;
+        if (gpGlobals->time - s_lastGlobalComingTime >= 1.5f) {
+            s_lastGlobalComingTime = gpGlobals->time;
+            const char* cue = (RANDOM_LONG(1, 2) == 1) ? "spk zpmod/coming_1\n" : "spk zpmod/coming_2\n";
+            for (int i = 1; i <= gpGlobals->maxClients; ++i) {
+                edict_t* cl = INDEXENT(i);
+                if (!cl || cl->free || (cl->v.flags & FL_FAKECLIENT)) continue;
+                CBasePlayer* cp = (CBasePlayer*)GET_PRIVATE(cl);
+                if (cp && cp->IsPlayer())
+                    CLIENT_COMMAND(cl, "%s", cue);
+            }
+        }
     }
 
-    // yay effects
-    UTIL_ScreenShake(pPlayer->pev->origin, 10.0f, 5.0f, 1.0f, 512.0f);
-
-    Vector red = Vector(255,0,0);
-    UTIL_ScreenFade(pPlayer, red, 1.0f, 0.2f, 255, FFADE_IN);
+    // CSMoE-style infection screen pulse + subtle jolt
+    UTIL_ScreenShake(pPlayer->pev->origin, 6.0f, 4.0f, 0.8f, 256.0f);
+    UTIL_ScreenFade(pPlayer, Vector(200, 20, 20), 0.6f, 0.15f, 160, FFADE_IN);
 
     // zombie stuff
     pPlayer->pev->deadflag = DEAD_NO;
@@ -1060,19 +1072,67 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
         }
     }
 
-    // UTIL_Sparks(pPlayer->pev->origin);
-    MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, pPlayer->pev->origin);
-        WRITE_BYTE(TE_BLOODSPRITE);
-        WRITE_COORD(pPlayer->pev->origin.x);
-        WRITE_COORD(pPlayer->pev->origin.y);
-        WRITE_COORD(pPlayer->pev->origin.z + 32);
-        WRITE_SHORT(MODEL_INDEX("sprites/blood.spr"));
-        WRITE_SHORT(MODEL_INDEX("sprites/blood.spr"));
-        WRITE_BYTE(248);
-        WRITE_BYTE(20);
+    // CSMoE-style infection burst: crimson dlight + blood spray + shockwave ring + particle burst
+    Vector fxCenter = pPlayer->pev->origin + Vector(0, 0, 32);
+
+    MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, fxCenter);
+        WRITE_BYTE(TE_DLIGHT);
+        WRITE_COORD(fxCenter.x);
+        WRITE_COORD(fxCenter.y);
+        WRITE_COORD(fxCenter.z);
+        WRITE_BYTE(22);   // radius * 10 = 220 units
+        WRITE_BYTE(255);  // r
+        WRITE_BYTE(25);   // g
+        WRITE_BYTE(25);   // b
+        WRITE_BYTE(10);   // life (1.0s)
+        WRITE_BYTE(25);   // decay
     MESSAGE_END();
 
-    ZPThunderStrike(player);
+    MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, fxCenter);
+        WRITE_BYTE(TE_BLOODSPRITE);
+        WRITE_COORD(fxCenter.x);
+        WRITE_COORD(fxCenter.y);
+        WRITE_COORD(fxCenter.z);
+        WRITE_SHORT(MODEL_INDEX("sprites/bloodspray.spr"));
+        WRITE_SHORT(MODEL_INDEX("sprites/blooddrop.spr"));
+        WRITE_BYTE(248);
+        WRITE_BYTE(18);
+    MESSAGE_END();
+
+    Vector ringBase = pPlayer->pev->origin + Vector(0, 0, 18);
+    MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, ringBase);
+        WRITE_BYTE(TE_BEAMCYLINDER);
+        WRITE_COORD(ringBase.x);
+        WRITE_COORD(ringBase.y);
+        WRITE_COORD(ringBase.z);
+        WRITE_COORD(ringBase.x);
+        WRITE_COORD(ringBase.y);
+        WRITE_COORD(ringBase.z + 120.0f);
+        WRITE_SHORT(MODEL_INDEX("sprites/shockwave.spr"));
+        WRITE_BYTE(0);    // startframe
+        WRITE_BYTE(0);    // framerate
+        WRITE_BYTE(4);    // life (0.4s)
+        WRITE_BYTE(16);   // width
+        WRITE_BYTE(0);    // noise
+        WRITE_BYTE(220);  // r
+        WRITE_BYTE(20);   // g
+        WRITE_BYTE(20);   // b
+        WRITE_BYTE(200);  // brightness
+        WRITE_BYTE(0);    // speed
+    MESSAGE_END();
+
+    MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, fxCenter);
+        WRITE_BYTE(TE_PARTICLEBURST);
+        WRITE_COORD(fxCenter.x);
+        WRITE_COORD(fxCenter.y);
+        WRITE_COORD(fxCenter.z);
+        WRITE_SHORT(48);  // radius
+        WRITE_BYTE(248);  // color (crimson)
+        WRITE_BYTE(4);    // duration (0.4s)
+    MESSAGE_END();
+
+    if (g_players[idx].ZMClass == ZM_CLASS_BOSS)
+        ZPThunderStrike(player);
 
     // a zombie cannot own a sentry: drop any turret the human had deployed
     ZPRemoveTurretsOf(player);
@@ -3310,6 +3370,9 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_GENERIC("models/player/helmet/helmet.mdl");
     PRECACHE_MODEL("sprites/laserbeam.spr");
     PRECACHE_MODEL("sprites/lgtning.spr");
+    PRECACHE_MODEL("sprites/shockwave.spr");
+    PRECACHE_MODEL("sprites/bloodspray.spr");
+    PRECACHE_MODEL("sprites/blooddrop.spr");
 
     ZPSupplyBoxPrecache();
 }
