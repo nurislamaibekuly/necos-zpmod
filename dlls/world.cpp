@@ -526,8 +526,8 @@ void CWorld::Precache( void )
 	// Setup light animation tables. 'a' is total darkness, 'z' is maxbright.
 	//
 
-	// 0 normal
-	LIGHT_STYLE( 0, "m" );
+	// 0 normal (ZPMod: dark horror baseline)
+	LIGHT_STYLE( 0, "c" );
 
 	// 1 FLICKER (first variety)
 	LIGHT_STYLE( 1, "mmnmmommommnonmmonqnmmo" );

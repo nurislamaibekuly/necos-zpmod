@@ -540,7 +540,7 @@ void ZPSyncZombieState(edict_t* player) {
     ZPSyncTeamKey(player);
 
     bool blackout = (g_round.state == RS_ACTIVE && g_round.eventType == ZEV_BLACKOUT);
-    const char* lightStyle = blackout ? (zombie ? "m" : "a") : (zombie ? "r" : "e");
+    const char* lightStyle = blackout ? (zombie ? "m" : "a") : (zombie ? "r" : "c");
 
     MESSAGE_BEGIN(MSG_ONE, SVC_LIGHTSTYLE, NULL, player);
         WRITE_BYTE(0);

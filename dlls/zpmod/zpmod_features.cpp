@@ -240,7 +240,7 @@ void ZPFeatureRoundThink(ZPRound* round) {
     if (round->state != RS_ACTIVE) {
         if (s_blackoutOn) {
             s_blackoutOn = false;
-            LIGHT_STYLE(0, "e");
+            LIGHT_STYLE(0, "c");
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* e = INDEXENT(i);
                 if (ZPIsPlayerConnected(e))
@@ -265,7 +265,7 @@ void ZPFeatureRoundThink(ZPRound* round) {
         }
     } else if (s_blackoutOn) {
         s_blackoutOn = false;
-        LIGHT_STYLE(0, "e");
+        LIGHT_STYLE(0, "c");
         for (int i = 1; i <= gpGlobals->maxClients; i++) {
             edict_t* e = INDEXENT(i);
             if (ZPIsPlayerConnected(e))
@@ -633,7 +633,7 @@ void ZPFeatureForceEvent(int ev, bool immediate) {
         return;
     }
 
-    LIGHT_STYLE(0, "m");
+    LIGHT_STYLE(0, "c");
     s_blackoutOn = false;
     g_round.eventType = ev < 0 ? ZEV_NONE : ev;
     g_round.suddenDeathActive = (g_round.eventType == ZEV_SUDDEN_DEATH);
