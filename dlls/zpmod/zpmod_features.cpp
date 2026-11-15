@@ -73,14 +73,26 @@ void ZPFeatureInit(void) {
 void ZPFeaturePreRound(ZPRound* round) {
     if (!round) return;
 
+    static const int kModeWeights[] = {
+        35, // ZMODE_CLASSIC
+        25, // ZMODE_MULTIPLE
+        18, // ZMODE_SWARM
+        14, // ZMODE_PLAGUE
+        4,  // ZMODE_ARMAGEDDON (rare)
+        4   // ZMODE_NEMESIS (rare)
+    };
+    const int totalWeight = 100;
+
     int prevMode = round->mode;
-    int mode;
-    if (prevMode >= ZMODE_CLASSIC && prevMode <= ZMODE_NEMESIS) {
-        do {
-            mode = RANDOM_LONG(ZMODE_CLASSIC, ZMODE_NEMESIS);
-        } while (mode == prevMode);
-    } else {
-        mode = RANDOM_LONG(ZMODE_CLASSIC, ZMODE_NEMESIS);
+    int mode = ZMODE_CLASSIC;
+    for (int attempt = 0; attempt < 8; attempt++) {
+        int roll = RANDOM_LONG(1, totalWeight);
+        for (int i = ZMODE_CLASSIC; i <= ZMODE_NEMESIS; i++) {
+            roll -= kModeWeights[i];
+            if (roll <= 0) { mode = i; break; }
+        }
+        if (mode != prevMode || prevMode < ZMODE_CLASSIC || prevMode > ZMODE_NEMESIS)
+            break;
     }
     round->mode = mode;
 
