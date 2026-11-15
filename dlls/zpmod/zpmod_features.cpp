@@ -307,14 +307,15 @@ void ZPFeatureRoundThink(ZPRound* round) {
         }
     }
 
-    // HEARTBEAT: steady thump for the last human under pressure
+    // HEARTBEAT: steady thump for the last human under pressure (local to real client only)
     if (gpGlobals->time >= s_heartbeatUntil) {
         s_heartbeatUntil = gpGlobals->time + 1.5f;
         for (int i = 1; i <= gpGlobals->maxClients; i++) {
             edict_t* e = INDEXENT(i);
             if (!ZPIsPlayerConnected(e) || !g_players[i].lastHuman) continue;
             if (e->v.health <= 0 || !ZPIsHuman(e)) continue;
-            EMIT_SOUND(e, CHAN_STATIC, "player/heartbeat1.wav", 0.3f, ATTN_NORM);
+            if (!(e->v.flags & FL_FAKECLIENT))
+                CLIENT_COMMAND(e, "spk \"player/heartbeat1.wav\"\n");
             break;
         }
     }
@@ -498,7 +499,8 @@ void ZPFeatureOnKill(edict_t* killer, bool fromHeadshot) {
     if (pPlayer->pev->health > 200.0f)
         pPlayer->pev->health = 200.0f;
 
-    EMIT_SOUND(killer, CHAN_ITEM, sfx, 1.0, ATTN_NORM);
+    if (!(killer->v.flags & FL_FAKECLIENT))
+        CLIENT_COMMAND(killer, "spk \"%s\"\n", sfx);
     UTIL_ScreenFade(pPlayer, Vector((float)r, (float)g, (float)b), 0.2f, 0.1f, 255, FFADE_IN);
     ZPStreakHud(killer, tag, r, g, b);
 }
@@ -547,7 +549,8 @@ void ZPFeatureOnInfect(edict_t* victim, int infectorIndex) {
     int b = (streak == 5) ? 0 : 90;
 
     if (streak == 5)
-        EMIT_SOUND(infector, CHAN_ITEM, "zpmod/round_start_boss.wav", 1.0, ATTN_NORM);
+        if (!(infector->v.flags & FL_FAKECLIENT))
+            CLIENT_COMMAND(infector, "spk \"zpmod/round_start_boss.wav\"\n");
     ZPStreakHud(infector, tag, r, g, b);
 }
 

@@ -733,7 +733,7 @@ BOOL CZPThrowGrenade::Deploy( void )
 {
 	m_bRetirePending = false;
 	m_flReleaseThrow = -1;
-	if( DeploySound() )
+	if( DeploySound() && !(m_pPlayer->pev->flags & FL_FAKECLIENT) )
 		EMIT_SOUND( ENT( m_pPlayer->pev ), CHAN_WEAPON, DeploySound(), 1.0f, ATTN_NORM );
 	return DefaultDeploy( ViewModelPath(), PlayerModelPath(), DeployAnim(), "crowbar" );
 }
