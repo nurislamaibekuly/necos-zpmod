@@ -1388,6 +1388,7 @@ void CZPTurret::BuildThink( void )
 	pev->renderfx = kRenderFxNone;
 	pev->takedamage = DAMAGE_AIM;
 	pev->solid = SOLID_SLIDEBOX;	// collisions come back with the real gun
+	pev->groupinfo = 2;		// collide with zombies (bit 2), not humans (bit 1)
 
 	m_iAutoStart = TRUE;
 	SetUse( &CBaseTurret::TurretUse );

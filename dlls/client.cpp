@@ -1242,6 +1242,7 @@ int AddToFullPack( struct entity_state_s *state, int e, edict_t *ent, edict_t *h
 			return 0;
 	}
 	
+	bool turretNoCollide = false;
 	if( host->v.groupinfo )
 	{
 		UTIL_SetGroupTrace( host->v.groupinfo, GROUP_OP_AND );
@@ -1252,7 +1253,13 @@ int AddToFullPack( struct entity_state_s *state, int e, edict_t *ent, edict_t *h
 			if( g_groupop == GROUP_OP_AND )
 			{
 				if( !( ent->v.groupinfo & host->v.groupinfo ) )
-					return 0;
+				{
+					// Keep zp_turret visible to humans, just non-solid in prediction
+					if( FClassnameIs( &ent->v, "zp_turret" ) )
+						turretNoCollide = true;
+					else
+						return 0;
+				}
 			}
 			else if( g_groupop == GROUP_OP_NAND )
 			{
@@ -1315,7 +1322,7 @@ int AddToFullPack( struct entity_state_s *state, int e, edict_t *ent, edict_t *h
 	}
 
 	state->scale		= ent->v.scale;
-	state->solid		= ent->v.solid;
+	state->solid		= turretNoCollide ? SOLID_NOT : ent->v.solid;
 	state->colormap		= ent->v.colormap;
 
 	state->movetype		= ent->v.movetype;

@@ -534,6 +534,7 @@ void ZPSyncZombieState(edict_t* player) {
     bool zombie = ZPIsZombie(player);
 
     ZPSyncTeamKey(player);
+    player->v.groupinfo = zombie ? (1 | 2) : 1;
 
     bool blackout = (g_round.state == RS_ACTIVE && g_round.eventType == ZEV_BLACKOUT);
     const char* lightStyle = blackout ? (zombie ? "m" : "a") : (zombie ? "r" : "c");
@@ -2224,7 +2225,23 @@ void ZPPlayerThink(edict_t* player) {
             player->v.renderamt = 0;
         }
 
-        if (!(pPlayer->m_afButtonPressed & IN_ATTACK2)) return;
+        bool triggerAbility = (pPlayer->m_afButtonPressed & IN_ATTACK2) != 0;
+        if (!triggerAbility && (player->v.flags & FL_FAKECLIENT) &&
+            g_round.state == RS_ACTIVE &&
+            g_players[idx].abilityCooldown <= gpGlobals->time)
+        {
+            int ab = ZMClassAbility(cls);
+            float range = (ab == ZMABILITY_SHOCK) ? 700.0f : (ab == ZMABILITY_SLAM ? 110.0f : 420.0f);
+            for (int i = 1; i <= gpGlobals->maxClients; i++) {
+                edict_t* target = INDEXENT(i);
+                if (!ZPIsHuman(target) || ZPIsDead(target)) continue;
+                if ((target->v.origin - player->v.origin).Length() <= range) {
+                    triggerAbility = true;
+                    break;
+                }
+            }
+        }
+        if (!triggerAbility) return;
         if (g_players[idx].abilityCooldown > gpGlobals->time) return;
 
         UTIL_MakeVectors(pPlayer->pev->v_angle);
