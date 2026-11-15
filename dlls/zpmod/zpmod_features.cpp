@@ -238,8 +238,15 @@ void ZPFeatureRoundThink(ZPRound* round) {
     if (!round) return;
 
     if (round->state != RS_ACTIVE) {
-        LIGHT_STYLE(0, "m");
-        s_blackoutOn = false;
+        if (s_blackoutOn) {
+            s_blackoutOn = false;
+            LIGHT_STYLE(0, "e");
+            for (int i = 1; i <= gpGlobals->maxClients; i++) {
+                edict_t* e = INDEXENT(i);
+                if (ZPIsPlayerConnected(e))
+                    ZPSyncZombieState(e);
+            }
+        }
         s_heartbeatUntil = 0.0f;
         return;
     }
@@ -249,11 +256,21 @@ void ZPFeatureRoundThink(ZPRound* round) {
         if (!s_blackoutOn) {
             s_blackoutOn = true;
             UTIL_ClientPrintAll(HUD_PRINTCENTER, "BLACKOUT!\n");
-            LIGHT_STYLE(0, "a"); // "a" is full dark, "z" would be full bright
+            LIGHT_STYLE(0, "a"); // "a" is full dark, zombies get nightvision via ZPSyncZombieState
+            for (int i = 1; i <= gpGlobals->maxClients; i++) {
+                edict_t* e = INDEXENT(i);
+                if (ZPIsPlayerConnected(e))
+                    ZPSyncZombieState(e);
+            }
         }
     } else if (s_blackoutOn) {
         s_blackoutOn = false;
-        LIGHT_STYLE(0, "m");
+        LIGHT_STYLE(0, "e");
+        for (int i = 1; i <= gpGlobals->maxClients; i++) {
+            edict_t* e = INDEXENT(i);
+            if (ZPIsPlayerConnected(e))
+                ZPSyncZombieState(e);
+        }
     }
 
     // PLAGUE: infection spreads on its own while at least 2 humans remain

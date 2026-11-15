@@ -282,7 +282,7 @@ void ZPHurt(edict_t* player);
 void ZPPlayerJoin(edict_t* player);
 void ZPPlayerDisconnect(edict_t* player);
 void ZPSetPlayerModel(edict_t* player, const char* modelName);
-void ZPRoundResetPlayer(edict_t* player);
+void ZPRoundResetPlayer(edict_t* player, bool keepWeapons = false);
 
 extern cvar_t zpmod_min_players;
 

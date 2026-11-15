@@ -539,9 +539,12 @@ void ZPSyncZombieState(edict_t* player) {
 
     ZPSyncTeamKey(player);
 
+    bool blackout = (g_round.state == RS_ACTIVE && g_round.eventType == ZEV_BLACKOUT);
+    const char* lightStyle = blackout ? (zombie ? "m" : "a") : (zombie ? "r" : "e");
+
     MESSAGE_BEGIN(MSG_ONE, SVC_LIGHTSTYLE, NULL, player);
         WRITE_BYTE(0);
-        WRITE_STRING(zombie ? "z" : "m");
+        WRITE_STRING(lightStyle);
         if (ZPLightstyleWantsFloat()) {
             // no pfnWriteFloat in the server API, but MSG_WriteLong and
             // MSG_WriteFloat push the same 32 bits, so the bit pattern of the
@@ -559,9 +562,9 @@ void ZPSyncZombieState(edict_t* player) {
     bool inSlot = (idx >= 1 && idx <= gpGlobals->maxClients);
 
     if (zombie) {
-        // (225, 50, 50) at alpha 110: the screen blends that red over the
-        // world rather than fading to it, so the map stays readable
-        UTIL_ScreenFade(pPlayer, Vector(225, 50, 50), 0.0f, 0.0f, 110, FFADE_STAYOUT);
+        // (180, 30, 30) at alpha 55: subtle red nightvision tint that keeps
+        // dark areas readable without washing out the screen
+        UTIL_ScreenFade(pPlayer, Vector(180, 30, 30), 0.0f, 0.0f, 55, FFADE_STAYOUT);
         if (inSlot) g_players[idx].visionTinted = true;
     } else if (inSlot && g_players[idx].visionTinted) {
         // only clear a tint we actually put up, so a round event's own fade
@@ -585,7 +588,7 @@ int ZPCountConnectedPlayers(void) {
     return count;
 }
 
-void ZPRoundResetPlayer(edict_t* ed) {
+void ZPRoundResetPlayer(edict_t* ed, bool keepWeapons) {
     if (!ZPIsPlayerConnected(ed)) return;
 
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(ed);
@@ -628,7 +631,12 @@ void ZPRoundResetPlayer(edict_t* ed) {
     pPlayer->m_hObserverTarget = NULL;
     pPlayer->m_afPhysicsFlags &= ~PFLAG_OBSERVER;
 
-    pPlayer->RemoveAllItems(false);
+    int savedAmmo[MAX_AMMO_SLOTS];
+    if (keepWeapons) {
+        memcpy(savedAmmo, pPlayer->m_rgAmmo, sizeof(savedAmmo));
+    } else {
+        pPlayer->RemoveAllItems(false);
+    }
     ed->v.team = RoleToInt(ROLE_HUMAN);
     ed->v.health = 100;
 
@@ -643,6 +651,15 @@ void ZPRoundResetPlayer(edict_t* ed) {
         pPlayer->pev->angles = spawn->pev->angles;
     }
     pPlayer->Spawn();
+
+    if (keepWeapons) {
+        for (int i = 0; i < MAX_AMMO_SLOTS; i++) {
+            if (savedAmmo[i] > pPlayer->m_rgAmmo[i])
+                pPlayer->m_rgAmmo[i] = savedAmmo[i];
+        }
+        if (pPlayer->m_pActiveItem)
+            pPlayer->m_pActiveItem->Deploy();
+    }
 
     if (g_players[idx].originalModel[0]) {
         const char* resetModel = g_players[idx].originalModel;
@@ -1616,10 +1633,21 @@ void ZPPlayerAimDisplay(edict_t* player) {
 
     char buf[96];
     if (ZPIsZombie(ed))
-        snprintf(buf, sizeof(buf), "%s\nHP  %d%%", name, percent);
+        snprintf(buf, sizeof(buf), "%s [%s]\nHP %d%%", name, ZMClassName(g_players[target].ZMClass), percent);
     else
-        snprintf(buf, sizeof(buf), "%s\nHP  %d", name, hp);
+        snprintf(buf, sizeof(buf), "%s\nHP %d", name, hp);
     UTIL_HudMessage(CBaseEntity::Instance(player), aim, buf);
+}
+
+static const char* ZPAbilityLabel(int ability) {
+    switch (ability) {
+        case ZMABILITY_DASH: return "DASH";
+        case ZMABILITY_HEAL: return "HEAL AURA";
+        case ZMABILITY_SLAM: return "GROUND SLAM";
+        case ZMABILITY_LEAP: return "LEAP";
+        case ZMABILITY_RAGE: return "RAGE";
+        default:             return "";
+    }
 }
 
 void ZPHUD()
@@ -1633,16 +1661,14 @@ void ZPHUD()
     params.fadeoutTime = 0;
     params.holdTime = 1.0f;
 
-    // top center: round status / timer
-    char top[128];
+    // top center (channel 2): round status / timer + team counts
+    char top[160];
     switch (g_round.state) {
         case RS_PREP: {
             if (g_round.countdownStarted && gpGlobals->time < g_round.nextStateTime) {
-                // the countdown number itself is shown by ZPRoundThink's
-                // once-per-second classic ZP-style HUD (white, y=0.37)
-                snprintf(top, sizeof(top), "INFECTION STARTING  [%s]", ZPModeName(g_round.mode));
+                snprintf(top, sizeof(top), "INFECTION STARTING  [%s]\nHumans: %d   |   Zombies: %d", ZPModeName(g_round.mode), h, z);
             } else {
-                snprintf(top, sizeof(top), "ROUND PREPARING");
+                snprintf(top, sizeof(top), "WAITING FOR PLAYERS  (%d / %d)", ZPCountConnectedPlayers(), (int)zpmod_min_players.value);
             }
             break;
         }
@@ -1651,16 +1677,16 @@ void ZPHUD()
             if (sec < 0) sec = 0;
             const char* ev = ZPEventName(g_round.eventType);
             if (ev[0])
-                snprintf(top, sizeof(top), "TIME LEFT %02d:%02d  [%s / %s]", sec / 60, sec % 60, ZPModeName(g_round.mode), ev);
+                snprintf(top, sizeof(top), "[ %02d:%02d ]  %s  (%s)\nHumans: %d   |   Zombies: %d", sec / 60, sec % 60, ZPModeName(g_round.mode), ev, h, z);
             else
-                snprintf(top, sizeof(top), "TIME LEFT %02d:%02d  [%s]", sec / 60, sec % 60, ZPModeName(g_round.mode));
+                snprintf(top, sizeof(top), "[ %02d:%02d ]  %s\nHumans: %d   |   Zombies: %d", sec / 60, sec % 60, ZPModeName(g_round.mode), h, z);
             break;
         }
         case RS_HUMANS_WIN:
-            snprintf(top, sizeof(top), "HUMANS WIN");
+            snprintf(top, sizeof(top), "HUMANS WIN\nSurvivors: %d", h);
             break;
         case RS_ZOMBIES_WIN:
-            snprintf(top, sizeof(top), "ZOMBIES WIN");
+            snprintf(top, sizeof(top), "ZOMBIES WIN\nInfected: %d", z);
             break;
         case RS_ROUND_DRAW:
             snprintf(top, sizeof(top), "ROUND DRAW");
@@ -1672,44 +1698,21 @@ void ZPHUD()
 
     params.channel = 2;
     params.x = -1;
-    params.y = 0.03f;
+    params.y = 0.02f;
     params.a1 = 255;
 
     if (g_round.state == RS_HUMANS_WIN) {
-        params.r1 = 0; params.g1 = 255; params.b1 = 0;
+        params.r1 = 80; params.g1 = 255; params.b1 = 120;
     } else if (g_round.state == RS_ZOMBIES_WIN) {
-        params.r1 = 255; params.g1 = 0; params.b1 = 0;
+        params.r1 = 255; params.g1 = 70; params.b1 = 70;
     } else if (g_round.state == RS_ROUND_DRAW) {
-        params.r1 = 255; params.g1 = 255; params.b1 = 255;
+        params.r1 = 220; params.g1 = 220; params.b1 = 220;
     } else {
-        params.r1 = 255; params.g1 = 220; params.b1 = 0;
+        params.r1 = 255; params.g1 = 215; params.b1 = 80;
     }
     UTIL_HudMessageAll(params, top);
 
-    // top left: team counters
-    char humbuf[32];
-    snprintf(humbuf, sizeof(humbuf), "HUMANS: %d", h);
-
-    hudtextparms_t hum = params;
-    hum.channel = 3;
-    hum.x = 0.01f;
-    hum.y = 0.06f;
-    hum.r1 = 0; hum.g1 = 255; hum.b1 = 0;
-    hum.a1 = 255;
-    UTIL_HudMessageAll(hum, humbuf);
-
-    char zombuf[32];
-    snprintf(zombuf, sizeof(zombuf), "ZOMBIES: %d", z);
-
-    hudtextparms_t zomb = params;
-    zomb.channel = 4;
-    zomb.x = 0.01f;
-    zomb.y = 0.10f;
-    zomb.r1 = 255; zomb.g1 = 0; zomb.b1 = 0;
-    zomb.a1 = 255;
-    UTIL_HudMessageAll(zomb, zombuf);
-
-    // bottom left: per-player info
+    // bottom left (channel 3): per-player class, HP/AP, and ability status
     for (int i = 1; i <= gpGlobals->maxClients; i++) {
         edict_t* ed = INDEXENT(i);
         if (!ZPIsPlayerConnected(ed)) continue;
@@ -1719,45 +1722,52 @@ void ZPHUD()
 
         int hp = (int)pPlayer->pev->health;
         if (hp < 0) hp = 0;
-        const char* className = "Human";
+        int ap = (int)pPlayer->pev->armorvalue;
+        if (ap < 0) ap = 0;
+
         bool isZombie = ZPIsZombie(ed);
-        if (isZombie) {
-            className = ZMClassName(g_players[i].ZMClass);
-        }
-        else if (ed->v.team == RoleToInt(ROLE_SPECTATOR)) className = "Spectator";
+        bool isSpec = (ed->v.team == RoleToInt(ROLE_SPECTATOR));
 
-        // zombies show a percentage of their class maximum; raw HP is in the
-        // thousands and useless at a glance
-        char hpText[16];
-        if (isZombie) {
-            float maxHp = ZMClassHealth(g_players[i].ZMClass);
-            int percent = (maxHp > 0.0f) ? (hp * 100) / (int)maxHp : 0;
-            if (percent < 0) percent = 0;
-            if (percent > 100) percent = 100;
-            snprintf(hpText, sizeof(hpText), "%d%%", percent);
-        } else {
-            snprintf(hpText, sizeof(hpText), "%d", hp);
-        }
-
-        char buf[64];
-        snprintf(buf, sizeof(buf), "HP %s  |  %s", hpText, className);
-
+        char buf[128];
         hudtextparms_t info;
         memset(&info, 0, sizeof(info));
-        info.channel = 5;
+        info.channel = 3;
         info.x = 0.02f;
-        info.y = 0.88f;
+        info.y = 0.85f;
         info.a1 = 255;
         info.fadeinTime = 0;
         info.fadeoutTime = 0;
         info.holdTime = 1.0f;
 
-        if (ed->v.team == RoleToInt(ROLE_SPECTATOR)) {
-            info.r1 = 255; info.g1 = 150; info.b1 = 0;
-        } else if (ZPIsZombie(ed)) {
-            info.r1 = 255; info.g1 = 70; info.b1 = 70;
+        if (isSpec) {
+            snprintf(buf, sizeof(buf), "SPECTATOR");
+            info.r1 = 255; info.g1 = 165; info.b1 = 40;
+        } else if (isZombie) {
+            int cls = g_players[i].ZMClass;
+            float maxHp = ZMClassHealth(cls);
+            int percent = (maxHp > 0.0f) ? (hp * 100) / (int)maxHp : 0;
+            if (percent < 0) percent = 0;
+            if (percent > 100) percent = 100;
+
+            int ab = ZMClassAbility(cls);
+            const char* abName = ZPAbilityLabel(ab);
+            if (ab != ZMABILITY_NONE && abName[0]) {
+                int rem = (int)ceilf(g_players[i].abilityCooldown - gpGlobals->time);
+                if (rem > 0)
+                    snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: %ds", ZMClassName(cls), percent, hp, abName, rem);
+                else
+                    snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: READY", ZMClassName(cls), percent, hp, abName);
+            } else {
+                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\nClaw [LMB]  |  Inf. Bomb [5]", ZMClassName(cls), percent, hp);
+            }
+
+            int rgb = ZMClassColor(cls);
+            info.r1 = (rgb >> 16) & 0xFF;
+            info.g1 = (rgb >> 8) & 0xFF;
+            info.b1 = rgb & 0xFF;
         } else {
-            info.r1 = 0; info.g1 = 255; info.b1 = 120;
+            snprintf(buf, sizeof(buf), "HUMAN  |  HP %d   AP %d\nMenu [M]: Abilities", hp, ap);
+            info.r1 = 80; info.g1 = 255; info.b1 = 150;
         }
 
         UTIL_HudMessage(CBaseEntity::Instance(ed), info, buf);
@@ -3030,6 +3040,7 @@ void ZPRoundThink(ZPRound* round) {
         ZPMapVoteThink();
 
         if (gpGlobals->time >= round->resetTime && !g_mapVote.active) {
+            bool humansWon = (round->state == RS_HUMANS_WIN);
             round->state = RS_PREP;
             round->countdownStarted = false;
             round->notEnoughPlayersPrinted = false;
@@ -3043,7 +3054,8 @@ void ZPRoundThink(ZPRound* round) {
                 edict_t* ed = INDEXENT(i);
                 if (!ZPIsPlayerConnected(ed)) continue;
 
-                ZPRoundResetPlayer(ed);
+                bool keepWeapons = humansWon && ZPIsHuman(ed) && ed->v.deadflag == DEAD_NO && ed->v.health > 0;
+                ZPRoundResetPlayer(ed, keepWeapons);
             }
         }
     }
