@@ -933,7 +933,7 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
         g_players[idx].ZMClass = ZM_CLASS_BOSS;
         EMIT_SOUND(player, CHAN_AUTO, forceBoss ? "zpmod/round_start_boss.wav"
                                                 : "ambience/the_horror3.wav",
-                   1.0, ATTN_NONE);
+                   0.5f, ATTN_NONE);
     } else {
         int roll = RANDOM_LONG(1, kZMClassRollTotal);
         int cls = ZM_CLASS_ZOMBIE;
@@ -1818,7 +1818,7 @@ void ZPRoundStartAmbient() {
         ENT(0),
         Vector(0,0,0),
         "ambience/wind1.wav",
-        1.0,
+        0.35f,
         ATTN_NONE,
         0,
         100
@@ -2510,19 +2510,13 @@ void ZPAnnounceMvp(void) {
 }
 
 void ZPRoundWinSound(edict_t* player, const char* winSound, const char* ambientPrefix, int ambientCount) {
+    (void)ambientPrefix;
+    (void)ambientCount;
     if (!player || (player->v.flags & FL_FAKECLIENT)) return;
 
-    // Announcer sounds are local one-shots ("spk"), exactly like Zombie
-    // Plague's PlaySound() in AmxModX. EMIT_SOUND once per connected player
-    // put one positional source per player into the same mix, so the
-    // announcement got louder with every player in the server.
+    // Play only the main win stinger (stacking the ambient track via a second
+    // spk at the same instant clipped/distorted client audio).
     CLIENT_COMMAND(player, "spk \"%s\"\n", winSound);
-
-    if (ambientCount > 0) {
-        char path[64];
-        snprintf(path, sizeof(path), "%s_ambient_%02d.wav", ambientPrefix, RANDOM_LONG(1, ambientCount));
-        CLIENT_COMMAND(player, "spk \"%s\"\n", path);
-    }
 }
 
 void ZPMapVoteReset(void) {

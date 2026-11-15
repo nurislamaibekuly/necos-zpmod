@@ -427,7 +427,7 @@ void CZPSupplyBox::BoxThink( void )
 	if( !m_bDropped && ( ( pev->flags & FL_ONGROUND ) || gpGlobals->time > m_flSpawn + ZP_SUPPLYBOX_DROP_FALLBACK ) )
 	{
 		m_bDropped = true;
-		EMIT_AMBIENT_SOUND( ENT( pev ), pev->origin, ZP_SUPPLYBOX_SND_DROP, 1.0f, ATTN_NONE, 0, PITCH_NORM );
+		EMIT_AMBIENT_SOUND( ENT( pev ), pev->origin, ZP_SUPPLYBOX_SND_DROP, 0.45f, ATTN_NORM, 0, PITCH_NORM );
 		ZP_Trace( "ZPSUPPLY drop sound edict=%d ground=%d\n", entindex(),
 			( pev->flags & FL_ONGROUND ) ? 1 : 0 );
 	}

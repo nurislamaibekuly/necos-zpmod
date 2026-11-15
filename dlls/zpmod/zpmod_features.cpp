@@ -309,12 +309,12 @@ void ZPFeatureRoundThink(ZPRound* round) {
 
     // HEARTBEAT: steady thump for the last human under pressure
     if (gpGlobals->time >= s_heartbeatUntil) {
-        s_heartbeatUntil = gpGlobals->time + 1.2f;
+        s_heartbeatUntil = gpGlobals->time + 1.5f;
         for (int i = 1; i <= gpGlobals->maxClients; i++) {
             edict_t* e = INDEXENT(i);
             if (!ZPIsPlayerConnected(e) || !g_players[i].lastHuman) continue;
             if (e->v.health <= 0 || !ZPIsHuman(e)) continue;
-            EMIT_SOUND(e, CHAN_STATIC, "player/heartbeat1.wav", 1.0, ATTN_NORM);
+            EMIT_SOUND(e, CHAN_STATIC, "player/heartbeat1.wav", 0.3f, ATTN_NORM);
             break;
         }
     }

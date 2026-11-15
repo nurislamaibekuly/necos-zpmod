@@ -43,7 +43,9 @@
 #define ZP_FREEZE_RADIUS			300.0f
 #define ZP_FREEZE_TIME				10.0f
 
-#define ZP_INFECTION_RADIUS			240.0f
+#define ZP_INFECTION_RADIUS			150.0f
+#define ZP_INFECTION_MAX_TARGETS	2
+#define ZP_INFECTION_LAST_HUMAN_DMG	75.0f
 
 // The molotov is a weapon too, so its damage follows the same zp_weapon_damage
 // scaling as the stock arsenal instead of being a fixed value.
@@ -623,6 +625,7 @@ void CZPGrenade::ExplodeInfection( void )
 	ZP_Trace("ZPGREN INFECTION explode at (%.0f %.0f %.0f)\n", origin.x, origin.y, origin.z);
 
 	int humansLeft = ZPCountAliveHumans();
+	int infected = 0;
 
 	for( int i = 1; i <= gpGlobals->maxClients; i++ )
 	{
@@ -638,17 +641,26 @@ void CZPGrenade::ExplodeInfection( void )
 		if( dist > ZP_INFECTION_RADIUS )
 			continue;
 
+		// Require line-of-sight so infection bombs don't infect through solid walls
+		TraceResult tr;
+		UTIL_TraceLine( origin + Vector( 0, 0, 16 ), p->pev->origin + Vector( 0, 0, 16 ), ignore_monsters, nullptr, &tr );
+		if( tr.flFraction < 1.0f )
+			continue;
+
 		ZP_Trace("ZPGREN INFECTION target slot=%d dist=%.0f humansLeft=%d\n", i, dist, humansLeft);
 
 		if( humansLeft > 1 )
 		{
 			ZPInfectPlayer( ed, true );
 			humansLeft--;
+			if( ++infected >= ZP_INFECTION_MAX_TARGETS )
+				break;
 			continue;
 		}
 
-		// last human alive is killed instead of infected, ZP5.0 style
-		p->TakeDamage( attacker, attacker, 10000.0f, DMG_GENERIC );
+		// last human takes heavy damage instead of a 10k instant-kill
+		p->TakeDamage( attacker, attacker, ZP_INFECTION_LAST_HUMAN_DMG, DMG_GENERIC );
+		break;
 	}
 
 	UTIL_Remove( this );
