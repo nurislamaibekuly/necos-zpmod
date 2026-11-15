@@ -230,28 +230,24 @@ float ZMClassDamageTaken(int cls) { return ZMClassInfo(cls).damageTaken; }
 int ZMClassAbility(int cls) { return ZMClassInfo(cls).ability; }
 int ZMClassColor(int cls) { return ZMClassInfo(cls).color; }
 
-// The callers pass the result straight to MAKE_STRING/SET_MODEL/PRECACHE_*, so
-// a small ring of buffers is enough to keep two classes from clobbering each
-// other inside one expression.
+// MAKE_STRING stores an offset directly to the passed pointer without copying,
+// so each class needs its own permanent buffer that another class's deploy
+// cannot overwrite later.
 static char* ZMClassAssetPath(char* buf, size_t size, const char* prefix, const char* tag) {
     snprintf(buf, size, "%s%s.mdl", prefix, tag);
     return buf;
 }
 
 const char* ZMClawViewModel(int cls) {
-    static char bufs[4][64];
-    static int next = 0;
-    char* buf = bufs[next];
-    next = (next + 1) & 3;
-    return ZMClassAssetPath(buf, 64, "models/zpmod/v_claws_", ZMClassInfo(cls).tag);
+    static char bufs[ZM_CLASS_COUNT][64];
+    int slot = ZMClassValid(cls) ? cls : 0;
+    return ZMClassAssetPath(bufs[slot], sizeof(bufs[slot]), "models/zpmod/v_claws_", ZMClassInfo(slot).tag);
 }
 
 const char* ZMBombViewModel(int cls) {
-    static char bufs[4][64];
-    static int next = 0;
-    char* buf = bufs[next];
-    next = (next + 1) & 3;
-    return ZMClassAssetPath(buf, 64, "models/zpmod/v_infectionbomb_", ZMClassInfo(cls).tag);
+    static char bufs[ZM_CLASS_COUNT][64];
+    int slot = ZMClassValid(cls) ? cls : 0;
+    return ZMClassAssetPath(bufs[slot], sizeof(bufs[slot]), "models/zpmod/v_infectionbomb_", ZMClassInfo(slot).tag);
 }
 
 const char* ZMClassHurtSound(int cls, int variant) {
