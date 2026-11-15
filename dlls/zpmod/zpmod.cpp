@@ -2101,7 +2101,7 @@ static void ZMDeimosShock(edict_t* player) {
     TraceResult tr;
     UTIL_TraceLine(start, end, dont_ignore_monsters, player, &tr);
 
-    EMIT_SOUND(player, CHAN_WEAPON, "debris/beamstart7.wav", 1.0f, ATTN_NORM);
+    EMIT_SOUND(player, CHAN_WEAPON, "zpmod/deimos_skill_start.wav", 0.85f, ATTN_NORM);
 
     MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, start);
         WRITE_BYTE(TE_BEAMPOINTS);
@@ -2133,6 +2133,7 @@ static void ZMDeimosShock(edict_t* player) {
 
             pTarget->pev->velocity = pTarget->pev->velocity + gpGlobals->v_forward * 320.0f + Vector(0, 0, 180);
             pTarget->TakeDamage(pPlayer->pev, pPlayer->pev, 25.0f * ZPFeatureClawMultiplier(), DMG_SHOCK);
+            EMIT_SOUND(tr.pHit, CHAN_BODY, "zpmod/deimos_skill_hit.wav", 0.85f, ATTN_NORM);
             UTIL_ScreenShake(pTarget->pev->origin, 8.0f, 3.0f, 0.5f, 128.0f);
             UTIL_ScreenFade(pTarget, Vector(180, 40, 255), 0.35f, 0.1f, 140, FFADE_IN);
         }
@@ -2258,7 +2259,7 @@ void ZPPlayerThink(edict_t* player) {
             case ZMABILITY_DASH:
                 pPlayer->pev->velocity = dir * ZM_DASH_SPEED + Vector(0, 0, ZM_DASH_LIFT * lift);
                 g_players[idx].abilityCooldown = gpGlobals->time + ZM_DASH_COOLDOWN;
-                EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0, ATTN_NORM);
+                EMIT_SOUND(player, CHAN_WEAPON, "zpmod/zombi_pressure_female.wav", 0.85f, ATTN_NORM);
                 UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
                 break;
 
@@ -2277,14 +2278,14 @@ void ZPPlayerThink(edict_t* player) {
                 g_players[idx].abilityCooldown = gpGlobals->time + ZM_HEAL_COOLDOWN;
                 g_players[idx].healAuraUntil = gpGlobals->time + ZM_HEAL_DURATION;
                 g_players[idx].nextHealPulse = gpGlobals->time;
-                EMIT_SOUND(player, CHAN_WEAPON, "items/suitcharge1.wav", 1.0, ATTN_NORM);
+                EMIT_SOUND(player, CHAN_WEAPON, "zpmod/zombi_heal.wav", 0.85f, ATTN_NORM);
                 break;
 
             case ZMABILITY_RAGE:
                 g_players[idx].abilityCooldown = gpGlobals->time + ZM_RAGE_COOLDOWN;
                 g_players[idx].rageUntil = gpGlobals->time + ZM_RAGE_DURATION;
                 g_players[idx].rageStacks++;
-                EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_alert20.wav", 1.0, ATTN_NORM);
+                EMIT_SOUND(player, CHAN_WEAPON, "zpmod/zombi_pressure.wav", 0.85f, ATTN_NORM);
                 UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
                 break;
 
@@ -2300,7 +2301,7 @@ void ZPPlayerThink(edict_t* player) {
                 player->v.renderfx = kRenderFxGlowShell;
                 player->v.rendercolor = Vector(255, 40, 40);
                 player->v.renderamt = 16;
-                EMIT_SOUND(player, CHAN_VOICE, "zombie/zo_alert20.wav", 1.0f, ATTN_NORM);
+                EMIT_SOUND(player, CHAN_VOICE, "zpmod/zombi_pressure.wav", 0.85f, ATTN_NORM);
                 UTIL_ScreenShake(pPlayer->pev->origin, 6.0f, 3.0f, 0.4f, 256.0f);
                 break;
 
@@ -2315,7 +2316,7 @@ void ZPPlayerThink(edict_t* player) {
                 player->v.renderfx = kRenderFxGlowShell;
                 player->v.rendercolor = Vector(255, 160, 40);
                 player->v.renderamt = 16;
-                EMIT_SOUND(player, CHAN_WEAPON, "items/gunpickup2.wav", 1.0f, ATTN_NORM);
+                EMIT_SOUND(player, CHAN_WEAPON, "zpmod/zombi_heal_heavy.wav", 0.85f, ATTN_NORM);
                 UTIL_ScreenShake(pPlayer->pev->origin, 5.0f, 2.0f, 0.3f, 192.0f);
                 break;
 
@@ -3267,6 +3268,13 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("debris/bustmetal1.wav");
     PRECACHE_SOUND("debris/bustmetal2.wav");
     PRECACHE_SOUND("player/heartbeat1.wav");
+    // CSMoE zombie ability sounds
+    PRECACHE_SOUND("zpmod/deimos_skill_start.wav");
+    PRECACHE_SOUND("zpmod/deimos_skill_hit.wav");
+    PRECACHE_SOUND("zpmod/zombi_pressure.wav");
+    PRECACHE_SOUND("zpmod/zombi_pressure_female.wav");
+    PRECACHE_SOUND("zpmod/zombi_heal.wav");
+    PRECACHE_SOUND("zpmod/zombi_heal_heavy.wav");
 
     // Every class model has to be precached: a zombie can roll any of the
     // eight the moment a round starts, and clients that never precached the
