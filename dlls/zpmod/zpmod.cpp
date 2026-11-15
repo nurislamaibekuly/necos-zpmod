@@ -162,7 +162,7 @@ static const ZMClassDef g_zmClasses[ZM_CLASS_COUNT] = {
     //  name        tag        model               hp   armor speed grav claw taken  ability        color
     // Only 5 of the 8 models ship a zbs_ clip set. boss/heavy/tank have none at
     // all, so they deliberately fall back to the plain locomotion names.
-    { "ZOMBIE",  "zombie",  "necozpmod_zombie", 2000, 200, 290, 0.83f,  70, 1.00f, ZMABILITY_NONE, 0xFF2828,
+    { "ZOMBIE",  "zombie",  "necozpmod_zombie", 2000, 200, 290, 0.83f,  70, 1.00f, ZMABILITY_BERSERK, 0xFF2828,
       { "zpmod/hurt_1.wav", "zpmod/hurt_2.wav" },
       { "zpmod/death_1.wav", "zpmod/death_2.wav" },
       g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClaws2 },
@@ -172,7 +172,7 @@ static const ZMClassDef g_zmClasses[ZM_CLASS_COUNT] = {
       { "zpmod/death_female_1.wav", "zpmod/death_female_2.wav" },
       g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClaws3 },
 
-    { "DEIMOS",  "deimos",  "necozpmod_deimos", 2000, 200, 300, 0.72f,  70, 1.00f, ZMABILITY_NONE,  0xB020F0,
+    { "DEIMOS",  "deimos",  "necozpmod_deimos", 2000, 200, 300, 0.72f,  70, 1.00f, ZMABILITY_SHOCK,  0xB020F0,
       { "zpmod/hurt_heavy_1.wav", "zpmod/hurt_heavy_2.wav" },
       { "zpmod/death_heavy_1.wav", "zpmod/death_heavy_2.wav" },
       g_kClawAnimsDeimos, 2, g_kClawFramesDeimos, g_kBodyClaws3 },
@@ -182,7 +182,7 @@ static const ZMClassDef g_zmClasses[ZM_CLASS_COUNT] = {
       { "zpmod/death_1.wav", "zpmod/death_2.wav" },
       g_kClawAnims2, 2, g_kClawFramesHeal, g_kBodyClaws3 },
 
-    { "HEAVY",   "heavy",   "necozpmod_heavy",  3000, 300, 250, 0.95f,  85, 0.70f, ZMABILITY_NONE,  0xFF9C20,
+    { "HEAVY",   "heavy",   "necozpmod_heavy",  3000, 300, 250, 0.95f,  85, 0.70f, ZMABILITY_FORTIFY,  0xFF9C20,
       { "zpmod/hurt_heavy_1.wav", "zpmod/hurt_heavy_2.wav" },
       { "zpmod/death_heavy_1.wav", "zpmod/death_heavy_2.wav" },
       g_kClawAnims2, 2, g_kClawFrames66, g_kBodyClawsNone },
@@ -1637,12 +1637,15 @@ void ZPPlayerAimDisplay(edict_t* player) {
 
 static const char* ZPAbilityLabel(int ability) {
     switch (ability) {
-        case ZMABILITY_DASH: return "DASH";
-        case ZMABILITY_HEAL: return "HEAL AURA";
-        case ZMABILITY_SLAM: return "GROUND SLAM";
-        case ZMABILITY_LEAP: return "LEAP";
-        case ZMABILITY_RAGE: return "RAGE";
-        default:             return "";
+        case ZMABILITY_DASH:    return "DASH";
+        case ZMABILITY_HEAL:    return "HEAL AURA";
+        case ZMABILITY_SLAM:    return "GROUND SLAM";
+        case ZMABILITY_LEAP:    return "LEAP";
+        case ZMABILITY_RAGE:    return "RAGE";
+        case ZMABILITY_BERSERK: return "BERSERK";
+        case ZMABILITY_SHOCK:   return "SHOCK BEAM";
+        case ZMABILITY_FORTIFY: return "IRON SKIN";
+        default:                return "ABILITY";
     }
 }
 
@@ -1747,22 +1750,18 @@ void ZPHUD()
 
             int ab = ZMClassAbility(cls);
             const char* abName = ZPAbilityLabel(ab);
-            if (ab != ZMABILITY_NONE && abName[0]) {
-                int rem = (int)ceilf(g_players[i].abilityCooldown - gpGlobals->time);
-                if (rem > 0)
-                    snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: %ds", ZMClassName(cls), percent, hp, abName, rem);
-                else
-                    snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: READY", ZMClassName(cls), percent, hp, abName);
-            } else {
-                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\nClaw [LMB]  |  Inf. Bomb [5]", ZMClassName(cls), percent, hp);
-            }
+            int rem = (int)ceilf(g_players[i].abilityCooldown - gpGlobals->time);
+            if (rem > 0)
+                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: %ds", ZMClassName(cls), percent, hp, abName, rem);
+            else
+                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: READY", ZMClassName(cls), percent, hp, abName);
 
             int rgb = ZMClassColor(cls);
             info.r1 = (rgb >> 16) & 0xFF;
             info.g1 = (rgb >> 8) & 0xFF;
             info.b1 = rgb & 0xFF;
         } else {
-            snprintf(buf, sizeof(buf), "HUMAN  |  HP %d   AP %d\nMenu [M]: Abilities", hp, ap);
+            snprintf(buf, sizeof(buf), "HUMAN  |  HP %d   AP %d\nAbilities [E]", hp, ap);
             info.r1 = 80; info.g1 = 255; info.b1 = 150;
         }
 
@@ -1956,6 +1955,7 @@ void ZPRoundResetAbilities(int playerIndex) {
     g_players[playerIndex].abilityCooldown = 0.0f;
     g_players[playerIndex].rageUntil = 0.0f;
     g_players[playerIndex].healAuraUntil = 0.0f;
+    g_players[playerIndex].fortifyUntil = 0.0f;
     g_players[playerIndex].bossRageSpeed = 0.0f;
     g_players[playerIndex].rageStacks = 0;
     g_players[playerIndex].nextHealPulse = 0.0f;
@@ -1982,7 +1982,10 @@ float ZPZombieDamageTaken(edict_t* player) {
     if (!ZPIsZombie(player)) return 1.0f;
     int idx = ENTINDEX(player);
     if (idx < 1 || idx > gpGlobals->maxClients) return 1.0f;
-    return ZMClassDamageTaken(g_players[idx].ZMClass);
+    float mult = ZMClassDamageTaken(g_players[idx].ZMClass);
+    if (g_players[idx].fortifyUntil > gpGlobals->time)
+        mult *= 0.5f;
+    return mult;
 }
 
 // Called from CBasePlayer::TakeDamage when a zombie is hit. Feeds the two
@@ -2086,6 +2089,55 @@ static void ZMHealPulse(edict_t* player) {
     }
 }
 
+static void ZMDeimosShock(edict_t* player) {
+    CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+    if (!pPlayer) return;
+
+    UTIL_MakeVectors(pPlayer->pev->v_angle);
+    Vector start = pPlayer->pev->origin + pPlayer->pev->view_ofs;
+    Vector end = start + gpGlobals->v_forward * 750.0f;
+
+    TraceResult tr;
+    UTIL_TraceLine(start, end, dont_ignore_monsters, player, &tr);
+
+    EMIT_SOUND(player, CHAN_WEAPON, "debris/beamstart7.wav", 1.0f, ATTN_NORM);
+
+    MESSAGE_BEGIN(MSG_PVS, SVC_TEMPENTITY, start);
+        WRITE_BYTE(TE_BEAMPOINTS);
+        WRITE_COORD(start.x);
+        WRITE_COORD(start.y);
+        WRITE_COORD(start.z - 6.0f);
+        WRITE_COORD(tr.vecEndPos.x);
+        WRITE_COORD(tr.vecEndPos.y);
+        WRITE_COORD(tr.vecEndPos.z);
+        WRITE_SHORT(MODEL_INDEX("sprites/laserbeam.spr"));
+        WRITE_BYTE(0);
+        WRITE_BYTE(0);
+        WRITE_BYTE(4);   // 0.4s
+        WRITE_BYTE(16);  // width
+        WRITE_BYTE(12);  // noise
+        WRITE_BYTE(180); // r
+        WRITE_BYTE(40);  // g
+        WRITE_BYTE(255); // b
+        WRITE_BYTE(220); // brightness
+        WRITE_BYTE(10);  // scroll
+    MESSAGE_END();
+
+    if (tr.pHit && ZPIsHuman(tr.pHit)) {
+        CBasePlayer* pTarget = (CBasePlayer*)GET_PRIVATE(tr.pHit);
+        if (pTarget && pTarget->IsAlive()) {
+            int tIdx = ENTINDEX(tr.pHit);
+            if (tIdx >= 1 && tIdx <= gpGlobals->maxClients)
+                g_players[tIdx].slowUntil = gpGlobals->time + 2.0f;
+
+            pTarget->pev->velocity = pTarget->pev->velocity + gpGlobals->v_forward * 320.0f + Vector(0, 0, 180);
+            pTarget->TakeDamage(pPlayer->pev, pPlayer->pev, 25.0f * ZPFeatureClawMultiplier(), DMG_SHOCK);
+            UTIL_ScreenShake(pTarget->pev->origin, 8.0f, 3.0f, 0.5f, 128.0f);
+            UTIL_ScreenFade(pTarget, Vector(180, 40, 255), 0.35f, 0.1f, 140, FFADE_IN);
+        }
+    }
+}
+
 static void ZMTankSlam(edict_t* player) {
     EMIT_SOUND(player, CHAN_WEAPON, "zombie/claw_strike1.wav", 1.0, ATTN_NORM);
     EMIT_SOUND(player, CHAN_WEAPON, "debris/bustmetal1.wav", 1.0, ATTN_NORM);
@@ -2161,6 +2213,17 @@ void ZPPlayerThink(edict_t* player) {
         if (g_players[idx].healAuraUntil > gpGlobals->time)
             ZMHealPulse(player);
 
+        // clear ability glow shell once berserk/fortify wears off
+        if (!g_players[idx].isFrozen &&
+            player->v.renderfx == kRenderFxGlowShell &&
+            g_players[idx].rageUntil <= gpGlobals->time &&
+            g_players[idx].fortifyUntil <= gpGlobals->time)
+        {
+            player->v.renderfx = kRenderFxNone;
+            player->v.rendercolor = Vector(0, 0, 0);
+            player->v.renderamt = 0;
+        }
+
         if (!(pPlayer->m_afButtonPressed & IN_ATTACK2)) return;
         if (g_players[idx].abilityCooldown > gpGlobals->time) return;
 
@@ -2208,12 +2271,38 @@ void ZPPlayerThink(edict_t* player) {
                 UTIL_ScreenShake(pPlayer->pev->origin, 8.0f, 3.0f, 0.5f, 256.0f);
                 break;
 
+            case ZMABILITY_BERSERK:
+                if (pPlayer->pev->health <= 300.0f) {
+                    CLIENT_PRINTF(player, print_center, "Need > 300 HP for BERSERK\n");
+                    break;
+                }
+                pPlayer->pev->health -= 300.0f;
+                g_players[idx].abilityCooldown = gpGlobals->time + 14.0f;
+                g_players[idx].rageUntil = gpGlobals->time + 6.0f;
+                g_players[idx].rageStacks = ZM_RAGE_STACK_CAP;
+                player->v.renderfx = kRenderFxGlowShell;
+                player->v.rendercolor = Vector(255, 40, 40);
+                player->v.renderamt = 16;
+                EMIT_SOUND(player, CHAN_VOICE, "zombie/zo_alert20.wav", 1.0f, ATTN_NORM);
+                UTIL_ScreenShake(pPlayer->pev->origin, 6.0f, 3.0f, 0.4f, 256.0f);
+                break;
+
+            case ZMABILITY_SHOCK:
+                ZMDeimosShock(player);
+                g_players[idx].abilityCooldown = gpGlobals->time + 10.0f;
+                break;
+
+            case ZMABILITY_FORTIFY:
+                g_players[idx].abilityCooldown = gpGlobals->time + 15.0f;
+                g_players[idx].fortifyUntil = gpGlobals->time + 5.0f;
+                player->v.renderfx = kRenderFxGlowShell;
+                player->v.rendercolor = Vector(255, 160, 40);
+                player->v.renderamt = 16;
+                EMIT_SOUND(player, CHAN_WEAPON, "items/gunpickup2.wav", 1.0f, ATTN_NORM);
+                UTIL_ScreenShake(pPlayer->pev->origin, 5.0f, 2.0f, 0.3f, 192.0f);
+                break;
+
             default:
-                // zombie, deimos and heavy have no named ability, but they
-                // still lunge on right-click. This used to be unconditional for
-                // every zombie; when the per-class switch landed these three
-                // were left with a bare claw swing that never moved the player
-                // forward. Keep the original lunge as the fallback.
                 pPlayer->pev->velocity = dir * ZM_LUNGE_SPEED + Vector(0, 0, ZM_LUNGE_LIFT);
                 g_players[idx].abilityCooldown = gpGlobals->time + ZM_LUNGE_COOLDOWN;
                 EMIT_SOUND(player, CHAN_WEAPON, "zombie/zo_attack1.wav", 1.0f, ATTN_NORM);

@@ -36,14 +36,17 @@ enum ZMClasses {
     ZM_CLASS_COUNT
 };
 
-// right-click abilities (only these classes have one)
+// right-click abilities
 enum ZMAbility {
     ZMABILITY_NONE,
-    ZMABILITY_DASH,   // speed: burst forward
-    ZMABILITY_HEAL,   // heal: aura that tops up nearby zombies
-    ZMABILITY_SLAM,   // tank: ground slam, area damage
-    ZMABILITY_LEAP,   // china: leap at the crosshair
-    ZMABILITY_RAGE    // boss: enrage burst
+    ZMABILITY_DASH,    // speed: burst forward
+    ZMABILITY_HEAL,    // heal: aura that tops up nearby zombies
+    ZMABILITY_SLAM,    // tank: ground slam, area damage
+    ZMABILITY_LEAP,    // china: leap at the crosshair
+    ZMABILITY_RAGE,    // boss: enrage burst
+    ZMABILITY_BERSERK, // zombie: spend HP for speed + damage boost (CSMoE Crazy)
+    ZMABILITY_SHOCK,   // deimos: shock beam at crosshair (slows + knocks back)
+    ZMABILITY_FORTIFY  // heavy: iron skin, 50% damage reduction
 };
 
 // how the first infection happens this round (chosen at countdown)
@@ -156,8 +159,9 @@ struct ZPPlayer {
     float slowUntil;      // post-infection slowdown
     float eventSlowUntil;
     float abilityCooldown; // per-class right-click, see ZMAbility
-    float rageUntil;       // deimos/boss enrage window
+    float rageUntil;       // deimos/boss/berserk enrage window
     float healAuraUntil;   // healer: aura keeps pulsing until this time
+    float fortifyUntil;    // heavy: iron skin damage reduction window
     float bossRageSpeed;   // boss: permanent +speed earned this round
     int rageStacks;        // deimos/boss: hits taken while raging
     float nextHealPulse;   // heal: next aura tick
