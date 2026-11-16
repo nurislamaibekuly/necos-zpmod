@@ -308,6 +308,8 @@ public:
 	void PrimaryAttack( void );
 	void Reload( void );
 	void WeaponIdle( void );
+private:
+	float m_flNextReload;
 };
 
 LINK_ENTITY_TO_CLASS( weapon_m1887, CWeaponM1887 )
@@ -601,6 +603,8 @@ public:
 	void SecondaryAttack( void );
 	void Reload( void );
 	void WeaponIdle( void );
+private:
+	BOOL m_fInZoom;
 };
 
 LINK_ENTITY_TO_CLASS( weapon_as50, CWeaponAS50 )
