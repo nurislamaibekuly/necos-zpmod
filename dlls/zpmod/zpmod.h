@@ -173,6 +173,7 @@ struct ZPPlayer {
     int buyMenuPage;       // current page inside ZPBuyOpen/ZPBuySelect
     float buyMenuUntil;    // expiry time for the active buy menu
     unsigned int rebuyMask;// bitmask of last purchased loadout items
+    float botBuyNextThink; // next time a bot checks the shop
 };
 
 extern ZPRound g_round;
@@ -326,6 +327,7 @@ void ZPBuyOnInfect(edict_t* infector);
 void ZPBuyOpen(edict_t* player, int page = 0);
 void ZPBuySelect(int playerIndex, int slot);
 void ZPBuyAutoOpenPrep(void);
+void ZPBuyBotThink(edict_t* player);
 void ZPBuyRebuy(edict_t* player);
 void ZPBuyAutobuy(edict_t* player);
 bool ZPBuyHandleClientCommand(edict_t* player, const char* cmd);

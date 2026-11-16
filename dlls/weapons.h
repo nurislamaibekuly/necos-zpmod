@@ -82,6 +82,12 @@ public:
 #define WEAPON_FREEZEBOMB		17	// zpmod: freeze grenade, humans only
 #define WEAPON_INFECTIONBOMB	18	// zpmod: infection bomb, zombies only
 #define WEAPON_TURRET			19	// zpmod: turret build kit, humans only
+#define WEAPON_DEAGLED			20	// csmoe: Dual Desert Eagle
+#define WEAPON_MP7A1D			21	// csmoe: Dual MP7A1
+#define WEAPON_M1887			22	// csmoe: Winchester M1887
+#define WEAPON_THOMPSON			23	// csmoe: Thompson Gold
+#define WEAPON_AS50				24	// csmoe: AS50 Sniper
+#define WEAPON_MG3				25	// csmoe: MG3 Machine Gun
 
 #define WEAPON_ALLWEAPONS		(~(1<<WEAPON_SUIT))
 
@@ -121,6 +127,11 @@ public:
 #define FREEZEBOMB_MAX_CARRY	5
 #define INFECTIONBOMB_MAX_CARRY	1
 #define TURRET_KIT_MAX_CARRY	1
+#define _50AE_MAX_CARRY			112
+#define _46MM_MAX_CARRY			240
+#define _45ACP_MAX_CARRY		200
+#define _50BMG_MAX_CARRY		30
+#define _556NATO_MAX_CARRY		400
 #define SATCHEL_MAX_CARRY		5
 #define TRIPMINE_MAX_CARRY		5
 #define SNARK_MAX_CARRY			15

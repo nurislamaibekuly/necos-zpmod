@@ -733,7 +733,7 @@ void ZPPlayerJoin(edict_t* player) {
         extern int gmsgSayText;
         MESSAGE_BEGIN(MSG_ONE, gmsgSayText, NULL, player);
             WRITE_BYTE(ENTINDEX(player));
-            WRITE_STRING("^2[ZP]^7 Buy Menu: press ^3E -> 4^7, type ^3/buy^7, or console ^3bind b buy^7\n");
+            WRITE_STRING("^2[ZP]^7 Weapon Shop: press ^3E -> 4^7, type ^3/buy^7, or console ^3bind b buy^7\n");
         MESSAGE_END();
     }
 
@@ -2257,6 +2257,9 @@ void ZPPlayerThink(edict_t* player) {
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
 
+    if (player->v.flags & FL_FAKECLIENT)
+        ZPBuyBotThink(player);
+
     if (ZPIsZombie(player)) {
         // keep the crowbar's third-person worldmodel hidden, only the claw viewmodel stays
         player->v.weaponmodel = iStringNull;
@@ -2453,7 +2456,7 @@ void ZPAbilityMenu(edict_t* player)
     bool rAdr   = active && g_players[idx].adrenalineCooldown <= gpGlobals->time;
     bool rFrost = active && g_players[idx].frostCooldown <= gpGlobals->time;
 
-    int bits = (1 << 3) | (1 << 9); // 4. Buy Menu, 0. Exit
+    int bits = (1 << 3) | (1 << 4) | (1 << 9); // 4. Weapon Shop, 5. Exit, 0. Exit
     if (rHeal)  bits |= (1 << 0);
     if (rAdr)   bits |= (1 << 1);
     if (rFrost) bits |= (1 << 2);
@@ -2464,8 +2467,8 @@ void ZPAbilityMenu(edict_t* player)
         "%s1.%s Heal +50 HP\n"
         "%s2.%s Adrenaline (6s speed)\n"
         "%s3.%s Frost Nova (freeze)\n\n"
-        "\\y4.\\w Buy Menu (CS Shop)\n\n"
-        "\\y0.\\w Exit",
+        "\\y4.\\w Weapon Shop\n\n"
+        "\\y5.\\w Exit",
         g_players[idx].money,
         rHeal  ? "\\y" : "\\d", rHeal  ? "\\w" : "\\d",
         rAdr   ? "\\y" : "\\d", rAdr   ? "\\w" : "\\d",
@@ -2492,7 +2495,7 @@ void ZPAbilitySelect(int playerIndex, int slot)
     g_players[playerIndex].menuType = ZPMENU_NONE;
     g_players[playerIndex].abilityMenuUntil = 0;
 
-    if (slot == 10) return;
+    if (slot == 5 || slot == 10) return;
     if (slot == 4) {
         ZPBuyOpen(ed, 0);
         return;

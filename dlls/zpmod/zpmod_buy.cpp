@@ -14,7 +14,7 @@
 extern int gmsgShowMenu;
 
 // ---------------------------------------------------------------------------
-// Classic CS 1.6-style Buy Menu & Cash Economy for Neco Zombie Plague
+// Classic CS 1.6-style Weapon Shop & Cash Economy for Neco Zombie Plague
 // ---------------------------------------------------------------------------
 
 static const int kStartMoney       = 2000;
@@ -34,17 +34,16 @@ static const int kAllAmmoCost      = 350;
 enum ZPBuyPage {
 	ZPBUY_ROOT = 0,
 	ZPBUY_PISTOLS,
-	ZPBUY_SMGS,
 	ZPBUY_RIFLES,
-	ZPBUY_SPECIAL,
-	ZPBUY_EQUIP,
+	ZPBUY_HEAVY,
+	ZPBUY_GEAR,
 	ZPBUY_ZOMBIE
 };
 
 enum ZPBuyKind {
 	BK_WEAPON = 0,   // unique gun (blocked when already owned)
-	BK_CONSUMABLE,   // stackable grenade / bomb up to maxAmmo
-	BK_AMMO_PACK,    // gives ammo1 (+ optional ammo2)
+	BK_CONSUMABLE,   // stackable grenade / bomb / kit up to maxAmmo
+	BK_NADE_PACK,    // Molotov + Frost combo pack
 	BK_ARMOR_50,
 	BK_ARMOR_100,
 	BK_LONGJUMP,
@@ -55,12 +54,12 @@ enum ZPBuyKind {
 
 struct ZPBuyItem {
 	ZPBuyPage page;
-	int slot;                 // 1..4
+	int slot;                 // 1..4 inside each page
 	const char* label;
 	int cost;
 	ZPBuyKind kind;
 	const char* classname;    // weapon entity classname or NULL
-	const char* ammoName;     // primary ammo pool (or required weapon for BK_AMMO_PACK)
+	const char* ammoName;     // primary ammo pool
 	int ammoAmount;
 	int ammoMax;
 	const char* ammo2Name;
@@ -70,38 +69,33 @@ struct ZPBuyItem {
 };
 
 static const ZPBuyItem kBuyCatalog[] = {
-	// --- 1. Pistols ---
-	{ ZPBUY_PISTOLS, 1, "9mm Handgun",         300, BK_WEAPON,    "weapon_9mmhandgun", "9mm", 51, _9MM_MAX_CARRY, NULL, 0, 0, (1u << 0) },
-	{ ZPBUY_PISTOLS, 2, ".357 Python Magnum",  900, BK_WEAPON,    "weapon_357",        "357", 12, _357_MAX_CARRY, NULL, 0, 0, (1u << 1) },
-	{ ZPBUY_PISTOLS, 3, "Pistol Ammo Pack",    150, BK_AMMO_PACK, NULL,                "9mm", 68, _9MM_MAX_CARRY, "357", 12, _357_MAX_CARRY, 0 },
+	// --- 1. Pistols & SMGs ---
+	{ ZPBUY_PISTOLS, 1, "Dual Desert Eagle",  1100, BK_WEAPON, "weapon_deagled",   "50AE",     56,  _50AE_MAX_CARRY,   NULL, 0, 0, (1u << 0) },
+	{ ZPBUY_PISTOLS, 2, "Dual MP7A1",         2000, BK_WEAPON, "weapon_mp7a1d",    "46MM",     160, _46MM_MAX_CARRY,   NULL, 0, 0, (1u << 1) },
+	{ ZPBUY_PISTOLS, 3, ".357 Python Magnum",  900, BK_WEAPON, "weapon_357",       "357",      18,  _357_MAX_CARRY,    NULL, 0, 0, (1u << 2) },
+	{ ZPBUY_PISTOLS, 4, "MP5 + M203",         1700, BK_WEAPON, "weapon_9mmAR",     "9mm",      100, _9MM_MAX_CARRY,    "ARgrenades", 2, M203_GRENADE_MAX_CARRY, (1u << 3) },
 
-	// --- 2. Shotguns & SMGs ---
-	{ ZPBUY_SMGS,    1, "SPAS-12 Shotgun",    1400, BK_WEAPON,    "weapon_shotgun",    "buckshot", 24, BUCKSHOT_MAX_CARRY, NULL, 0, 0, (1u << 2) },
-	{ ZPBUY_SMGS,    2, "MP5 Submachine Gun", 1800, BK_WEAPON,    "weapon_9mmAR",      "9mm",      90, _9MM_MAX_CARRY, NULL, 0, 0, (1u << 3) },
-	{ ZPBUY_SMGS,    3, "M203 AR Grenades x2", 400, BK_AMMO_PACK, "weapon_9mmAR",      "ARgrenades", 2, M203_GRENADE_MAX_CARRY, NULL, 0, 0, 0 },
-	{ ZPBUY_SMGS,    4, "Shotgun & SMG Ammo",  200, BK_AMMO_PACK, NULL,                "buckshot", 24, BUCKSHOT_MAX_CARRY, "9mm", 75, _9MM_MAX_CARRY, 0 },
+	// --- 2. Shotguns & Rifles ---
+	{ ZPBUY_RIFLES,  1, "M1887 Winchester",   1800, BK_WEAPON, "weapon_m1887",     "buckshot", 32,  BUCKSHOT_MAX_CARRY,NULL, 0, 0, (1u << 4) },
+	{ ZPBUY_RIFLES,  2, "Thompson Gold",      2300, BK_WEAPON, "weapon_thompson",  "45acp",    100, _45ACP_MAX_CARRY,  NULL, 0, 0, (1u << 5) },
+	{ ZPBUY_RIFLES,  3, "SPAS-12 Shotgun",    1400, BK_WEAPON, "weapon_shotgun",   "buckshot", 24,  BUCKSHOT_MAX_CARRY,NULL, 0, 0, (1u << 6) },
+	{ ZPBUY_RIFLES,  4, "Crossbow (Sniper)",  2100, BK_WEAPON, "weapon_crossbow",  "bolts",    15,  BOLT_MAX_CARRY,    NULL, 0, 0, (1u << 7) },
 
-	// --- 3. Rifles & Heavy ---
-	{ ZPBUY_RIFLES,  1, "Crossbow (Sniper)",  2200, BK_WEAPON,    "weapon_crossbow",   "bolts",   15, BOLT_MAX_CARRY,    NULL, 0, 0, (1u << 4) },
-	{ ZPBUY_RIFLES,  2, "Tau Cannon (Gauss)", 3400, BK_WEAPON,    "weapon_gauss",      "uranium", 40, URANIUM_MAX_CARRY, NULL, 0, 0, (1u << 5) },
-	{ ZPBUY_RIFLES,  3, "RPG Launcher",       3800, BK_WEAPON,    "weapon_rpg",        "rockets",  3, ROCKET_MAX_CARRY,  NULL, 0, 0, (1u << 6) },
-	{ ZPBUY_RIFLES,  4, "Gluon Gun (Egon)",   4400, BK_WEAPON,    "weapon_egon",       "uranium", 40, URANIUM_MAX_CARRY, NULL, 0, 0, (1u << 7) },
+	// --- 3. Heavy & Snipers ---
+	{ ZPBUY_HEAVY,   1, "AS50 Sniper .50",    3200, BK_WEAPON, "weapon_as50",      "50BMG",    15,  _50BMG_MAX_CARRY,  NULL, 0, 0, (1u << 8) },
+	{ ZPBUY_HEAVY,   2, "MG3 Machine Gun",    4200, BK_WEAPON, "weapon_mg3",       "556Nato",  200, _556NATO_MAX_CARRY,NULL, 0, 0, (1u << 9) },
+	{ ZPBUY_HEAVY,   3, "Tau Cannon (Gauss)", 3400, BK_WEAPON, "weapon_gauss",     "uranium",  40,  URANIUM_MAX_CARRY, NULL, 0, 0, (1u << 10) },
+	{ ZPBUY_HEAVY,   4, "Gluon Gun (Egon)",   4500, BK_WEAPON, "weapon_egon",      "uranium",  40,  URANIUM_MAX_CARRY, NULL, 0, 0, (1u << 11) },
 
-	// --- 4. Special & Grenades ---
-	{ ZPBUY_SPECIAL, 1, "Hivehand",           2400, BK_WEAPON,     "weapon_hornetgun",     "Hornets",      8, HORNET_MAX_CARRY,      NULL, 0, 0, (1u << 8) },
-	{ ZPBUY_SPECIAL, 2, "Molotov Cocktail",    500, BK_CONSUMABLE, "weapon_molotov",       "Molotov",      1, MOLOTOV_MAX_CARRY,     NULL, 0, 0, 0 },
-	{ ZPBUY_SPECIAL, 3, "Frost Grenade",       600, BK_CONSUMABLE, "weapon_freezebomb",    "Freezebomb",   1, FREEZEBOMB_MAX_CARRY,  NULL, 0, 0, 0 },
-	{ ZPBUY_SPECIAL, 4, "Satchel + Frag Pack", 800, BK_CONSUMABLE, "weapon_satchel",       "Satchel Charge", 1, SATCHEL_MAX_CARRY,  "weapon_handgrenade", 1, HANDGRENADE_MAX_CARRY, 0 },
+	// --- 4. Gear & Grenades ---
+	{ ZPBUY_GEAR,    1, "Assault Suit (100AP)",1000, BK_ARMOR_100, NULL, NULL, 0, 0, NULL, 0, 0, (1u << 12) },
+	{ ZPBUY_GEAR,    2, "Molotov + Frost Pack", 900, BK_NADE_PACK, NULL, "Molotov", 1, MOLOTOV_MAX_CARRY, "Freezebomb", 1, FREEZEBOMB_MAX_CARRY, 0 },
+	{ ZPBUY_GEAR,    3, "Long Jump Module",   1500, BK_LONGJUMP,  NULL, NULL, 0, 0, NULL, 0, 0, (1u << 13) },
+	{ ZPBUY_GEAR,    4, "Sentry Turret Kit",  1800, BK_CONSUMABLE,"weapon_turret", "Turret", 1, TURRET_KIT_MAX_CARRY, NULL, 0, 0, (1u << 14) },
 
-	// --- 5. Equipment & Gear ---
-	{ ZPBUY_EQUIP,   1, "Kevlar Vest (+50)",   600, BK_ARMOR_50,  NULL, NULL, 0, 0, NULL, 0, 0, 0 },
-	{ ZPBUY_EQUIP,   2, "Assault Suit (100)", 1100, BK_ARMOR_100, NULL, NULL, 0, 0, NULL, 0, 0, (1u << 9) },
-	{ ZPBUY_EQUIP,   3, "Long Jump Module",   1500, BK_LONGJUMP,  NULL, NULL, 0, 0, NULL, 0, 0, (1u << 10) },
-	{ ZPBUY_EQUIP,   4, "Sentry Turret Kit",  1800, BK_CONSUMABLE,"weapon_turret", "Turret", 1, TURRET_KIT_MAX_CARRY, NULL, 0, 0, (1u << 11) },
-
-	// --- 6. Zombie Extra Shop ---
+	// --- 5. Zombie Shop ---
 	{ ZPBUY_ZOMBIE,  1, "Infection Bomb",     1200, BK_CONSUMABLE, "weapon_infectionbomb", "Infectionbomb", 1, INFECTIONBOMB_MAX_CARRY, NULL, 0, 0, 0 },
-	{ ZPBUY_ZOMBIE,  2, "Blood Heal (+600 HP)",800, BK_ZM_HEAL,    NULL, NULL, 0, 0, NULL, 0, 0, 0 },
+	{ ZPBUY_ZOMBIE,  2, "Blood Heal (+600HP)", 800, BK_ZM_HEAL,    NULL, NULL, 0, 0, NULL, 0, 0, 0 },
 	{ ZPBUY_ZOMBIE,  3, "Fury Boost (8s Spd)",1000, BK_ZM_FURY,    NULL, NULL, 0, 0, NULL, 0, 0, 0 },
 	{ ZPBUY_ZOMBIE,  4, "T-Virus Antidote",   5000, BK_ZM_ANTIDOTE,NULL, NULL, 0, 0, NULL, 0, 0, 0 },
 };
@@ -109,7 +103,7 @@ static const ZPBuyItem kBuyCatalog[] = {
 static const int kNumBuyCatalog = (int)(sizeof(kBuyCatalog) / sizeof(kBuyCatalog[0]));
 
 // ---------------------------------------------------------------------------
-// ShowMenu transport helper (chunks long CS 1.6 menus cleanly)
+// ShowMenu transport helper (chunks long menus cleanly)
 // ---------------------------------------------------------------------------
 void ZPSendShowMenu(edict_t* player, int keys, int displayTime, const char* text) {
 	if (!player || player->free || (player->v.flags & FL_FAKECLIENT))
@@ -206,22 +200,13 @@ static int BuyItemStatus(edict_t* player, CBasePlayer* pPlayer, const ZPBuyItem&
 			break;
 
 		case BK_CONSUMABLE:
-			if (item.ammo2Name) {
-				// Satchel + Frag Pack
-				bool canSatchel = BuyCanReceiveAmmo(pPlayer, "Satchel Charge", SATCHEL_MAX_CARRY);
-				bool canFrag = BuyCanReceiveAmmo(pPlayer, "Hand Grenade", HANDGRENADE_MAX_CARRY);
-				if (!canSatchel && !canFrag) return 2;
-			} else if (!BuyCanReceiveAmmo(pPlayer, item.ammoName, item.ammoMax)) {
-				return 2;
-			}
+			if (!BuyCanReceiveAmmo(pPlayer, item.ammoName, item.ammoMax)) return 2;
 			break;
 
-		case BK_AMMO_PACK: {
-			if (item.classname && !pPlayer->HasNamedPlayerItem(item.classname))
-				return 2;
-			bool can1 = BuyCanReceiveAmmo(pPlayer, item.ammoName, item.ammoMax);
-			bool can2 = item.ammo2Name ? BuyCanReceiveAmmo(pPlayer, item.ammo2Name, item.ammo2Max) : false;
-			if (!can1 && !can2) return 2;
+		case BK_NADE_PACK: {
+			bool canMol = BuyCanReceiveAmmo(pPlayer, "Molotov", MOLOTOV_MAX_CARRY);
+			bool canFrz = BuyCanReceiveAmmo(pPlayer, "Freezebomb", FREEZEBOMB_MAX_CARRY);
+			if (!canMol && !canFrz) return 2;
 			break;
 		}
 
@@ -252,20 +237,28 @@ static int BuyItemStatus(edict_t* player, CBasePlayer* pPlayer, const ZPBuyItem&
 	return (money < item.cost) ? 1 : 0;
 }
 
+static const struct { const char* wpn; const char* ammo; int add; int maxCarry; } kAmmoPool[] = {
+	{ "weapon_9mmhandgun", "9mm",        68,  _9MM_MAX_CARRY },
+	{ "weapon_357",        "357",        18,  _357_MAX_CARRY },
+	{ "weapon_deagled",    "50AE",       56,  _50AE_MAX_CARRY },
+	{ "weapon_mp7a1d",     "46MM",      160,  _46MM_MAX_CARRY },
+	{ "weapon_shotgun",    "buckshot",   32,  BUCKSHOT_MAX_CARRY },
+	{ "weapon_m1887",      "buckshot",   32,  BUCKSHOT_MAX_CARRY },
+	{ "weapon_9mmAR",      "9mm",       100,  _9MM_MAX_CARRY },
+	{ "weapon_9mmAR",      "ARgrenades",  2,  M203_GRENADE_MAX_CARRY },
+	{ "weapon_thompson",   "45acp",     100,  _45ACP_MAX_CARRY },
+	{ "weapon_crossbow",   "bolts",      15,  BOLT_MAX_CARRY },
+	{ "weapon_as50",       "50BMG",      15,  _50BMG_MAX_CARRY },
+	{ "weapon_mg3",        "556Nato",   200,  _556NATO_MAX_CARRY },
+	{ "weapon_gauss",      "uranium",    40,  URANIUM_MAX_CARRY },
+	{ "weapon_egon",       "uranium",    40,  URANIUM_MAX_CARRY },
+	{ "weapon_rpg",        "rockets",     2,  ROCKET_MAX_CARRY },
+};
+
 static bool BuyRefillAllAmmoAvailable(CBasePlayer* pPlayer) {
-	static const struct { const char* wpn; const char* ammo; int maxCarry; } kPool[] = {
-		{ "weapon_9mmhandgun", "9mm",        _9MM_MAX_CARRY },
-		{ "weapon_357",        "357",        _357_MAX_CARRY },
-		{ "weapon_shotgun",    "buckshot",   BUCKSHOT_MAX_CARRY },
-		{ "weapon_9mmAR",      "9mm",        _9MM_MAX_CARRY },
-		{ "weapon_9mmAR",      "ARgrenades", M203_GRENADE_MAX_CARRY },
-		{ "weapon_crossbow",   "bolts",      BOLT_MAX_CARRY },
-		{ "weapon_gauss",      "uranium",    URANIUM_MAX_CARRY },
-		{ "weapon_egon",       "uranium",    URANIUM_MAX_CARRY },
-		{ "weapon_rpg",        "rockets",    ROCKET_MAX_CARRY },
-	};
-	for (size_t i = 0; i < sizeof(kPool) / sizeof(kPool[0]); i++) {
-		if (pPlayer->HasNamedPlayerItem(kPool[i].wpn) && BuyCanReceiveAmmo(pPlayer, kPool[i].ammo, kPool[i].maxCarry))
+	for (size_t i = 0; i < sizeof(kAmmoPool) / sizeof(kAmmoPool[0]); i++) {
+		if (pPlayer->HasNamedPlayerItem(kAmmoPool[i].wpn) &&
+		    BuyCanReceiveAmmo(pPlayer, kAmmoPool[i].ammo, kAmmoPool[i].maxCarry))
 			return true;
 	}
 	return false;
@@ -273,13 +266,12 @@ static bool BuyRefillAllAmmoAvailable(CBasePlayer* pPlayer) {
 
 static const char* BuyPageTitle(int page) {
 	switch (page) {
-		case ZPBUY_PISTOLS: return "Buy Handgun";
-		case ZPBUY_SMGS:    return "Buy Shotguns & SMGs";
-		case ZPBUY_RIFLES:  return "Buy Rifles & Heavy";
-		case ZPBUY_SPECIAL: return "Special & Grenades";
-		case ZPBUY_EQUIP:   return "Buy Equipment";
+		case ZPBUY_PISTOLS: return "Pistols & SMGs";
+		case ZPBUY_RIFLES:  return "Shotguns & Rifles";
+		case ZPBUY_HEAVY:   return "Heavy & Snipers";
+		case ZPBUY_GEAR:    return "Gear & Grenades";
 		case ZPBUY_ZOMBIE:  return "Zombie Shop";
-		default:            return "Buy Item";
+		default:            return "Weapon Shop";
 	}
 }
 
@@ -287,6 +279,8 @@ static void BuyGiveWeaponWithAmmo(CBasePlayer* pPlayer, const ZPBuyItem& item) {
 	pPlayer->GiveNamedItem(item.classname);
 	if (item.ammoName && item.ammoAmount > 0)
 		pPlayer->GiveAmmo(item.ammoAmount, item.ammoName, item.ammoMax);
+	if (item.ammo2Name && item.ammo2Amount > 0)
+		pPlayer->GiveAmmo(item.ammo2Amount, item.ammo2Name, item.ammo2Max);
 	pPlayer->SelectItem(item.classname);
 }
 
@@ -325,22 +319,15 @@ static bool BuyExecuteItem(edict_t* player, CBasePlayer* pPlayer, const ZPBuyIte
 			break;
 
 		case BK_CONSUMABLE:
-			if (item.ammo2Name) {
-				if (BuyCanReceiveAmmo(pPlayer, "Satchel Charge", SATCHEL_MAX_CARRY))
-					pPlayer->GiveNamedItem("weapon_satchel");
-				if (BuyCanReceiveAmmo(pPlayer, "Hand Grenade", HANDGRENADE_MAX_CARRY))
-					pPlayer->GiveNamedItem("weapon_handgrenade");
-			} else {
-				pPlayer->GiveNamedItem(item.classname);
-			}
+			pPlayer->GiveNamedItem(item.classname);
 			sfx = "items/9mmclip1.wav";
 			break;
 
-		case BK_AMMO_PACK:
-			if (item.ammoName)
-				pPlayer->GiveAmmo(item.ammoAmount, item.ammoName, item.ammoMax);
-			if (item.ammo2Name)
-				pPlayer->GiveAmmo(item.ammo2Amount, item.ammo2Name, item.ammo2Max);
+		case BK_NADE_PACK:
+			if (BuyCanReceiveAmmo(pPlayer, "Molotov", MOLOTOV_MAX_CARRY))
+				pPlayer->GiveNamedItem("weapon_molotov");
+			if (BuyCanReceiveAmmo(pPlayer, "Freezebomb", FREEZEBOMB_MAX_CARRY))
+				pPlayer->GiveNamedItem("weapon_freezebomb");
 			sfx = "items/9mmclip1.wav";
 			break;
 
@@ -391,37 +378,32 @@ static bool BuyExecuteItem(edict_t* player, CBasePlayer* pPlayer, const ZPBuyIte
 	return true;
 }
 
-static bool BuyRefillAllAmmo(edict_t* player, CBasePlayer* pPlayer) {
+static bool BuyRefillAllAmmo(edict_t* player, CBasePlayer* pPlayer, bool silent = false) {
 	int idx = ENTINDEX(player);
 	if (!BuyRefillAllAmmoAvailable(pPlayer)) {
-		BuyPlayPrivateSound(player, "items/suitchargeno1.wav");
-		BuyHudNotice(player, "AMMO ALREADY FULL", 255, 190, 60);
+		if (!silent) {
+			BuyPlayPrivateSound(player, "items/suitchargeno1.wav");
+			BuyHudNotice(player, "AMMO ALREADY FULL", 255, 190, 60);
+		}
 		return false;
 	}
 	if (g_players[idx].money < kAllAmmoCost) {
-		BuyPlayPrivateSound(player, "items/suitchargeno1.wav");
-		BuyHudNotice(player, "INSUFFICIENT FUNDS ($350 NEEDED)", 255, 80, 80);
+		if (!silent) {
+			BuyPlayPrivateSound(player, "items/suitchargeno1.wav");
+			BuyHudNotice(player, "INSUFFICIENT FUNDS ($350 NEEDED)", 255, 80, 80);
+		}
 		return false;
 	}
 
 	g_players[idx].money -= kAllAmmoCost;
-	static const struct { const char* wpn; const char* ammo; int add; int maxCarry; } kRefill[] = {
-		{ "weapon_9mmhandgun", "9mm",        68, _9MM_MAX_CARRY },
-		{ "weapon_357",        "357",        18, _357_MAX_CARRY },
-		{ "weapon_shotgun",    "buckshot",   32, BUCKSHOT_MAX_CARRY },
-		{ "weapon_9mmAR",      "9mm",       100, _9MM_MAX_CARRY },
-		{ "weapon_9mmAR",      "ARgrenades",  2, M203_GRENADE_MAX_CARRY },
-		{ "weapon_crossbow",   "bolts",      15, BOLT_MAX_CARRY },
-		{ "weapon_gauss",      "uranium",    40, URANIUM_MAX_CARRY },
-		{ "weapon_egon",       "uranium",    40, URANIUM_MAX_CARRY },
-		{ "weapon_rpg",        "rockets",     2, ROCKET_MAX_CARRY },
-	};
-	for (size_t i = 0; i < sizeof(kRefill) / sizeof(kRefill[0]); i++) {
-		if (pPlayer->HasNamedPlayerItem(kRefill[i].wpn))
-			pPlayer->GiveAmmo(kRefill[i].add, kRefill[i].ammo, kRefill[i].maxCarry);
+	for (size_t i = 0; i < sizeof(kAmmoPool) / sizeof(kAmmoPool[0]); i++) {
+		if (pPlayer->HasNamedPlayerItem(kAmmoPool[i].wpn))
+			pPlayer->GiveAmmo(kAmmoPool[i].add, kAmmoPool[i].ammo, kAmmoPool[i].maxCarry);
 	}
-	BuyPlayPrivateSound(player, "items/9mmclip1.wav");
-	BuyHudNotice(player, "PURCHASED: ALL AMMO (-$350)", 90, 255, 130);
+	if (!silent) {
+		BuyPlayPrivateSound(player, "items/9mmclip1.wav");
+		BuyHudNotice(player, "PURCHASED: ALL AMMO (-$350)", 90, 255, 130);
+	}
 	return true;
 }
 
@@ -440,6 +422,7 @@ void ZPBuyResetPlayer(int idx, bool resetMoney) {
 	}
 	g_players[idx].buyMenuPage = ZPBUY_ROOT;
 	g_players[idx].buyMenuUntil = 0.0f;
+	g_players[idx].botBuyNextThink = gpGlobals->time + 1.5f;
 }
 
 void ZPBuyAddMoney(edict_t* player, int delta, const char* reason) {
@@ -517,7 +500,7 @@ void ZPBuyOpen(edict_t* player, int page) {
 	bool isZombie = ZPIsZombie(player);
 	if (isZombie) {
 		page = ZPBUY_ZOMBIE;
-	} else if (page < ZPBUY_ROOT || page > ZPBUY_EQUIP) {
+	} else if (page < ZPBUY_ROOT || page > ZPBUY_GEAR) {
 		page = ZPBUY_ROOT;
 	}
 
@@ -525,27 +508,26 @@ void ZPBuyOpen(edict_t* player, int page) {
 
 	char text[512];
 	int off = 0;
-	int keys = (1 << 9); // 0. Exit
+	int keys = (1 << 4) | (1 << 9); // 5 (Back/Exit) + 0 (Exit if bound)
 
 	if (page == ZPBUY_ROOT) {
 		bool canAmmo = BuyRefillAllAmmoAvailable(pPlayer) && g_players[idx].money >= kAllAmmoCost;
 		bool hasRebuy = (g_players[idx].rebuyMask != 0);
 
 		off += snprintf(text + off, sizeof(text) - off,
-			"\\yBuy Item\\w  (\\y$%d\\w)\n\n"
-			"\\y1.\\w Pistols\n"
-			"\\y2.\\w Shotguns & SMGs\n"
-			"\\y3.\\w Rifles & Heavy\n"
-			"\\y4.\\w Special & Grenades\n"
-			"\\y5.\\w Equipment & Gear\n\n"
+			"\\yWeapon Shop\\w  (\\y$%d\\w)\n\n"
+			"\\y1.\\w Pistols & SMGs\n"
+			"\\y2.\\w Shotguns & Rifles\n"
+			"\\y3.\\w Heavy & Snipers\n"
+			"\\y4.\\w Gear & Grenades\n\n"
 			"%s6.%s Refill All Ammo %s\\R$%d\n"
 			"%s7.%s Re-Buy Previous\n\n"
-			"\\y0.\\w Exit",
+			"\\y5.\\w Exit",
 			g_players[idx].money,
 			canAmmo ? "\\y" : "\\d", canAmmo ? "\\w" : "\\d", canAmmo ? "\\y" : "\\d", kAllAmmoCost,
 			hasRebuy ? "\\y" : "\\d", hasRebuy ? "\\w" : "\\d");
 
-		keys |= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);
+		keys |= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 6);
 	} else {
 		const char* hdrColor = isZombie ? "\\r" : "\\y";
 		off += snprintf(text + off, sizeof(text) - off,
@@ -577,10 +559,9 @@ void ZPBuyOpen(edict_t* player, int page) {
 		}
 
 		if (!isZombie) {
-			off += snprintf(text + off, sizeof(text) - off, "\n\\y5.\\w Back\n\\y0.\\w Exit");
-			keys |= (1 << 4); // 5. Back
+			off += snprintf(text + off, sizeof(text) - off, "\n\\y5.\\w Back");
 		} else {
-			off += snprintf(text + off, sizeof(text) - off, "\n\\y0.\\w Exit");
+			off += snprintf(text + off, sizeof(text) - off, "\n\\y5.\\w Exit");
 		}
 	}
 
@@ -619,7 +600,6 @@ void ZPBuySelect(int playerIndex, int slot) {
 
 	bool isZombie = ZPIsZombie(ed);
 	if (isZombie && page != ZPBUY_ZOMBIE) {
-		// Player got infected while holding the human menu open; pivot safely.
 		ZPBuyOpen(ed, ZPBUY_ZOMBIE);
 		return;
 	}
@@ -629,9 +609,12 @@ void ZPBuySelect(int playerIndex, int slot) {
 	}
 
 	if (page == ZPBUY_ROOT) {
-		if (slot >= 1 && slot <= 5) {
+		if (slot >= 1 && slot <= 4) {
 			ZPBuyOpen(ed, slot);
 			return;
+		}
+		if (slot == 5) {
+			return; // Exit
 		}
 		if (slot == 6) {
 			BuyRefillAllAmmo(ed, pPlayer);
@@ -644,8 +627,9 @@ void ZPBuySelect(int playerIndex, int slot) {
 		return;
 	}
 
-	if (!isZombie && slot == 5) {
-		ZPBuyOpen(ed, ZPBUY_ROOT);
+	if (slot == 5) {
+		if (!isZombie)
+			ZPBuyOpen(ed, ZPBUY_ROOT);
 		return;
 	}
 
@@ -653,8 +637,7 @@ void ZPBuySelect(int playerIndex, int slot) {
 		const ZPBuyItem& item = kBuyCatalog[i];
 		if (item.page == page && item.slot == slot) {
 			bool ok = BuyExecuteItem(ed, pPlayer, item, false);
-			// Keep ammo / failed attempts responsive inside the submenu, classic-style
-			if (!ok || item.kind == BK_AMMO_PACK)
+			if (!ok)
 				ZPBuyOpen(ed, page);
 			return;
 		}
@@ -674,7 +657,6 @@ void ZPBuyRebuy(edict_t* player) {
 		return;
 	}
 
-	// Buy in descending priority (heavy weapons + armor first) without closing mid-way.
 	int bought = 0;
 	for (int i = kNumBuyCatalog - 1; i >= 0; i--) {
 		const ZPBuyItem& item = kBuyCatalog[i];
@@ -701,13 +683,16 @@ void ZPBuyAutobuy(edict_t* player) {
 	bool isBot = (player->v.flags & FL_FAKECLIENT) != 0;
 	int bought = 0;
 
-	// Bots pick varied primary archetypes so they don't all look identical.
 	static const char* kPrimaryOrder[] = {
+		"weapon_mg3",
 		"weapon_egon",
-		"weapon_gauss",
-		"weapon_crossbow",
+		"weapon_as50",
+		"weapon_thompson",
+		"weapon_mp7a1d",
+		"weapon_m1887",
 		"weapon_9mmAR",
 		"weapon_shotgun",
+		"weapon_deagled",
 		"weapon_357"
 	};
 
@@ -720,18 +705,18 @@ void ZPBuyAutobuy(edict_t* player) {
 			if (kBuyCatalog[i].classname && !strcmp(kBuyCatalog[i].classname, cls)) {
 				if (BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true)) {
 					bought++;
-					step = numPrim; // grab one primary weapon first
+					step = numPrim;
 				}
 				break;
 			}
 		}
 	}
 
-	// Add armor if affordable
-	for (int i = 0; i < kNumBuyCatalog; i++) {
-		if (kBuyCatalog[i].kind == BK_ARMOR_100 || kBuyCatalog[i].kind == BK_ARMOR_50) {
-			if (BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true)) {
-				bought++;
+	if (pPlayer->pev->armorvalue < 50.0f) {
+		for (int i = 0; i < kNumBuyCatalog; i++) {
+			if (kBuyCatalog[i].kind == BK_ARMOR_100) {
+				if (BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true))
+					bought++;
 				break;
 			}
 		}
@@ -744,6 +729,93 @@ void ZPBuyAutobuy(edict_t* player) {
 		} else {
 			BuyPlayPrivateSound(player, "items/suitchargeno1.wav");
 			BuyHudNotice(player, "NOTHING AFFORDABLE TO AUTO-BUY", 255, 190, 60);
+		}
+	}
+}
+
+void ZPBuyBotThink(edict_t* player) {
+	if (!player || !(player->v.flags & FL_FAKECLIENT)) return;
+	if (!ZPIsPlayerConnected(player)) return;
+
+	int idx = ENTINDEX(player);
+	if (idx < 1 || idx > gpGlobals->maxClients) return;
+	if (gpGlobals->time < g_players[idx].botBuyNextThink) return;
+	g_players[idx].botBuyNextThink = gpGlobals->time + RANDOM_FLOAT(4.0f, 7.0f);
+
+	CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
+	if (!pPlayer || !pPlayer->IsAlive()) return;
+
+	int cash = g_players[idx].money;
+
+	if (ZPIsZombie(player)) {
+		if (g_round.state != RS_ACTIVE) return;
+
+		float maxHp = ZMClassHealth(g_players[idx].ZMClass);
+		if (pPlayer->pev->health < maxHp * 0.55f && cash >= 800) {
+			for (int i = 0; i < kNumBuyCatalog; i++) {
+				if (kBuyCatalog[i].page == ZPBUY_ZOMBIE && kBuyCatalog[i].kind == BK_ZM_HEAL) {
+					if (BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true))
+						return;
+				}
+			}
+		}
+		if (cash >= 1200 && !pPlayer->HasNamedPlayerItem("weapon_infectionbomb") && RANDOM_LONG(1, 100) <= 45) {
+			for (int i = 0; i < kNumBuyCatalog; i++) {
+				if (kBuyCatalog[i].page == ZPBUY_ZOMBIE && kBuyCatalog[i].classname &&
+				    !strcmp(kBuyCatalog[i].classname, "weapon_infectionbomb")) {
+					if (BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true))
+						return;
+				}
+			}
+		}
+		if (cash >= 1000 && g_players[idx].rageUntil < gpGlobals->time && RANDOM_LONG(1, 100) <= 35) {
+			for (int i = 0; i < kNumBuyCatalog; i++) {
+				if (kBuyCatalog[i].page == ZPBUY_ZOMBIE && kBuyCatalog[i].kind == BK_ZM_FURY) {
+					BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true);
+					return;
+				}
+			}
+		}
+		return;
+	}
+
+	// Human bot purchases: upgrade primary/sidearm, buy armor, nades, or refill ammo
+	bool hasPrimary =
+		pPlayer->HasNamedPlayerItem("weapon_mg3") ||
+		pPlayer->HasNamedPlayerItem("weapon_as50") ||
+		pPlayer->HasNamedPlayerItem("weapon_egon") ||
+		pPlayer->HasNamedPlayerItem("weapon_gauss") ||
+		pPlayer->HasNamedPlayerItem("weapon_thompson") ||
+		pPlayer->HasNamedPlayerItem("weapon_mp7a1d") ||
+		pPlayer->HasNamedPlayerItem("weapon_m1887") ||
+		pPlayer->HasNamedPlayerItem("weapon_9mmAR") ||
+		pPlayer->HasNamedPlayerItem("weapon_shotgun");
+
+	if (!hasPrimary || cash >= 3200) {
+		ZPBuyAutobuy(player);
+		return;
+	}
+
+	if (pPlayer->pev->armorvalue < 40.0f && cash >= 1000) {
+		for (int i = 0; i < kNumBuyCatalog; i++) {
+			if (kBuyCatalog[i].kind == BK_ARMOR_100) {
+				if (BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true))
+					return;
+			}
+		}
+	}
+
+	if (cash >= kAllAmmoCost && BuyRefillAllAmmoAvailable(pPlayer) && RANDOM_LONG(1, 100) <= 50) {
+		if (BuyRefillAllAmmo(player, pPlayer, true))
+			return;
+	}
+
+	if (cash >= 900 && RANDOM_LONG(1, 100) <= 25) {
+		for (int i = 0; i < kNumBuyCatalog; i++) {
+			if (kBuyCatalog[i].kind == BK_NADE_PACK) {
+				BuyExecuteItem(player, pPlayer, kBuyCatalog[i], true);
+				return;
+			}
 		}
 	}
 }
@@ -772,7 +844,7 @@ bool ZPBuyHandleClientCommand(edict_t* player, const char* cmd) {
 		return true;
 	}
 	if (FStrEq(cmd, "buyequip")) {
-		ZPBuyOpen(player, ZPBUY_EQUIP);
+		ZPBuyOpen(player, ZPBUY_GEAR);
 		return true;
 	}
 	if (FStrEq(cmd, "rebuy")) {

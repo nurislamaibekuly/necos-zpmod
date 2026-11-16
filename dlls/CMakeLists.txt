@@ -171,6 +171,7 @@ set (SVDLL_SOURCES
 	zpmod/zpmod_stats.cpp
 	zpmod/zpmod_turret.cpp
 	zpmod/zpmod_supplybox.cpp
+	zpmod/zpmod_weapons.cpp
 	zpmod/zpmodelindex.cpp
 	../game_shared/voice_gamemgr.cpp
 	../pm_shared/pm_debug.c
