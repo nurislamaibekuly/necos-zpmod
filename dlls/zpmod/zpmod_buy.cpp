@@ -4,6 +4,7 @@
 #include "enginecallback.h"
 #include "weapons.h"
 #include "player.h"
+#include "shake.h"
 #include "zpmod.h"
 
 #include <math.h>
