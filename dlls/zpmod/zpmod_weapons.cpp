@@ -71,7 +71,7 @@ void CWeaponDeagleD::Spawn( void )
 {
 	Precache();
 	m_iId = WEAPON_DEAGLED;
-	SET_MODEL( ENT( pev ), "models/zpmod/w_ddeagle.mdl" );
+	SET_MODEL( ENT( pev ), "models/zpmod/p_ddeagle.mdl" );
 	m_iDefaultAmmo = 28;
 	FallInit();
 }
@@ -80,7 +80,6 @@ void CWeaponDeagleD::Precache( void )
 {
 	PRECACHE_MODEL( "models/zpmod/v_ddeagle.mdl" );
 	PRECACHE_MODEL( "models/zpmod/p_ddeagle.mdl" );
-	PRECACHE_MODEL( "models/zpmod/w_ddeagle.mdl" );
 	PRECACHE_GENERIC( "sprites/weapon_deagled.txt" );
 	PRECACHE_SOUND( "weapons/dde-1.wav" );
 	PRECACHE_SOUND( "weapons/DDe_Clipoff.wav" );
@@ -188,7 +187,7 @@ void CWeaponMP7A1D::Spawn( void )
 {
 	Precache();
 	m_iId = WEAPON_MP7A1D;
-	SET_MODEL( ENT( pev ), "models/zpmod/w_dmp7a1.mdl" );
+	SET_MODEL( ENT( pev ), "models/zpmod/p_dmp7a1.mdl" );
 	m_iDefaultAmmo = 80;
 	FallInit();
 }
@@ -197,7 +196,6 @@ void CWeaponMP7A1D::Precache( void )
 {
 	PRECACHE_MODEL( "models/zpmod/v_dmp7a1.mdl" );
 	PRECACHE_MODEL( "models/zpmod/p_dmp7a1.mdl" );
-	PRECACHE_MODEL( "models/zpmod/w_dmp7a1.mdl" );
 	PRECACHE_GENERIC( "sprites/weapon_mp7a1d.txt" );
 	PRECACHE_SOUND( "weapons/dmp7-1.wav" );
 	PRECACHE_SOUND( "weapons/Dmp7_drop.wav" );
