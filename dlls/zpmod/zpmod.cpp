@@ -629,11 +629,15 @@ void ZPRoundResetPlayer(edict_t* ed, bool keepWeapons) {
     pPlayer->m_afPhysicsFlags &= ~PFLAG_OBSERVER;
 
     int savedAmmo[MAX_AMMO_SLOTS];
+    BOOL savedLongJump = pPlayer->m_fLongJump;
     if (keepWeapons) {
         memcpy(savedAmmo, pPlayer->m_rgAmmo, sizeof(savedAmmo));
     } else {
         pPlayer->RemoveAllItems(false);
+        pPlayer->m_fLongJump = FALSE;
+        g_engfuncs.pfnSetPhysicsKeyValue(ed, "slj", "0");
     }
+    ZPBuyResetPlayer(idx, false);
     ed->v.team = RoleToInt(ROLE_HUMAN);
     ed->v.health = 100;
 
@@ -653,6 +657,10 @@ void ZPRoundResetPlayer(edict_t* ed, bool keepWeapons) {
         for (int i = 0; i < MAX_AMMO_SLOTS; i++) {
             if (savedAmmo[i] > pPlayer->m_rgAmmo[i])
                 pPlayer->m_rgAmmo[i] = savedAmmo[i];
+        }
+        if (savedLongJump) {
+            pPlayer->m_fLongJump = TRUE;
+            g_engfuncs.pfnSetPhysicsKeyValue(ed, "slj", "1");
         }
         if (pPlayer->m_pActiveItem)
             pPlayer->m_pActiveItem->Deploy();
@@ -685,6 +693,7 @@ void ZPPlayerJoin(edict_t* player) {
     g_players[idx].ZMClass = ZM_CLASS_ZOMBIE;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
+    ZPBuyResetPlayer(idx, true);
 
     char modelName[64] = "player"; // def player model btw
 
@@ -720,6 +729,14 @@ void ZPPlayerJoin(edict_t* player) {
     // fresh join always starts human, so this clears any stale overlay
     ZPSyncZombieState(player);
 
+    if (!(player->v.flags & FL_FAKECLIENT)) {
+        extern int gmsgSayText;
+        MESSAGE_BEGIN(MSG_ONE, gmsgSayText, NULL, player);
+            WRITE_BYTE(ENTINDEX(player));
+            WRITE_STRING("^2[ZP]^7 Buy Menu: press ^3E -> 4^7, type ^3/buy^7, or console ^3bind b buy^7\n");
+        MESSAGE_END();
+    }
+
     joinInProgress = false;
 }
 
@@ -736,6 +753,7 @@ void ZPPlayerDisconnect(edict_t* player) {
     g_players[idx].ZMClass = ZM_CLASS_ZOMBIE;
     g_players[idx].menuType = ZPMENU_NONE;
     g_players[idx].abilityMenuUntil = 0;
+    ZPBuyResetPlayer(idx, true);
     g_players[idx].welcomeMusicPending = false;
     g_players[idx].welcomeMusicStarted = false;
     player->v.health = 0;
@@ -1035,6 +1053,14 @@ void ZPInfectPlayer(edict_t* player, bool wasInfectedBySomeone) {
 
     ZP_Trace("ZPINFECT pre-strip by=%d weapons=0x%X\n", idx, (unsigned int)player->v.weapons);
     pPlayer->RemoveAllItems(false);
+    pPlayer->m_fLongJump = FALSE;
+    g_engfuncs.pfnSetPhysicsKeyValue(player, "slj", "0");
+    if (g_players[idx].menuType == ZPMENU_BUY || g_players[idx].menuType == ZPMENU_ABILITY) {
+        g_players[idx].menuType = ZPMENU_NONE;
+        g_players[idx].abilityMenuUntil = 0.0f;
+        g_players[idx].buyMenuUntil = 0.0f;
+        ZPSendShowMenu(player, 0, 0, "");
+    }
     pPlayer->GiveNamedItem("weapon_crowbar");
     // infection bomb: zombies only, one per infection
     pPlayer->GiveNamedItem("weapon_infectionbomb");
@@ -1813,16 +1839,16 @@ void ZPHUD()
             const char* abName = ZPAbilityLabel(ab);
             int rem = (int)ceilf(g_players[i].abilityCooldown - gpGlobals->time);
             if (rem > 0)
-                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: %ds", ZMClassName(cls), percent, hp, abName, rem);
+                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)   $%d\n[RMB] %s: %ds  |  [/buy]", ZMClassName(cls), percent, hp, g_players[i].money, abName, rem);
             else
-                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)\n[RMB] %s: READY", ZMClassName(cls), percent, hp, abName);
+                snprintf(buf, sizeof(buf), "%s  |  HP %d%% (%d)   $%d\n[RMB] %s: READY  |  [/buy]", ZMClassName(cls), percent, hp, g_players[i].money, abName);
 
             int rgb = ZMClassColor(cls);
             info.r1 = (rgb >> 16) & 0xFF;
             info.g1 = (rgb >> 8) & 0xFF;
             info.b1 = rgb & 0xFF;
         } else {
-            snprintf(buf, sizeof(buf), "HUMAN  |  HP %d   AP %d\nAbilities [E]", hp, ap);
+            snprintf(buf, sizeof(buf), "HUMAN  |  HP %d   AP %d   $%d\n[E] Abilities & Buy  |  [/buy]", hp, ap, g_players[i].money);
             info.r1 = 80; info.g1 = 255; info.b1 = 150;
         }
 
@@ -1970,6 +1996,7 @@ void ZPOnInfect(edict_t* victim, int infectorIndex) {
             if (pInfector) {
                 pInfector->AddPoints(1, FALSE);
             }
+            ZPBuyOnInfect(infector);
         }
     }
 }
@@ -1983,6 +2010,7 @@ void ZPKillReward(edict_t* killer, bool fromHeadshot) {
     if (!pPlayer || !pPlayer->IsAlive()) return;
 
     g_players[idx].kills++;
+    ZPBuyOnKill(killer, fromHeadshot);
 
     // zombie kills feed the boss's permanent speed ramp
     ZPZombieOnKilled(killer);
@@ -2007,7 +2035,7 @@ void ZPKillReward(edict_t* killer, bool fromHeadshot) {
     params.fadeoutTime = 0.5f;
     params.holdTime = 1.5f;
 
-    const char* msg = fromHeadshot ? "HEADSHOT KILL  +50 HP" : "KILL BONUS  +25 HP";
+    const char* msg = fromHeadshot ? "HEADSHOT KILL  +50 HP  +$900" : "KILL BONUS  +25 HP  +$600";
     UTIL_HudMessage(CBaseEntity::Instance(killer), params, msg);
 }
 
@@ -2390,14 +2418,26 @@ void ZPPlayerThink(edict_t* player) {
         return;
     }
 
-    // human kit: press +use (E) to open the ability menu
+    // human kit: expire timed menus cleanly, and press +use (E) to open menu
+    int pIdx = ENTINDEX(player);
+    if (pIdx >= 1 && pIdx <= gpGlobals->maxClients) {
+        if (g_players[pIdx].menuType == ZPMENU_BUY && g_players[pIdx].buyMenuUntil > 0.0f && gpGlobals->time > g_players[pIdx].buyMenuUntil) {
+            g_players[pIdx].menuType = ZPMENU_NONE;
+            g_players[pIdx].buyMenuUntil = 0.0f;
+        }
+        if (g_players[pIdx].menuType == ZPMENU_ABILITY && g_players[pIdx].abilityMenuUntil > 0.0f && gpGlobals->time > g_players[pIdx].abilityMenuUntil) {
+            g_players[pIdx].menuType = ZPMENU_NONE;
+            g_players[pIdx].abilityMenuUntil = 0.0f;
+        }
+    }
+
     if (ZPIsHuman(player) && (pPlayer->m_afButtonPressed & IN_USE))
         ZPAbilityMenu(player);
 }
 
 void ZPAbilityMenu(edict_t* player)
 {
-    if (!player) return;
+    if (!player || (player->v.flags & FL_FAKECLIENT)) return;
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(player);
     if (!pPlayer || !pPlayer->IsAlive()) return;
     int idx = ENTINDEX(player);
@@ -2405,38 +2445,36 @@ void ZPAbilityMenu(edict_t* player)
     // the map vote owns menuselect while it is running
     if (g_mapVote.active || g_players[idx].menuType == ZPMENU_VOTE) return;
 
-    // replacing any lingering ability menu from an earlier +use
     g_players[idx].abilityMenuUntil = 0;
+    g_players[idx].buyMenuUntil = 0;
 
-    int bits = 0;
-    if (g_players[idx].healCooldown <= gpGlobals->time) bits |= (1 << 0);
-    if (g_players[idx].adrenalineCooldown <= gpGlobals->time) bits |= (1 << 1);
-    if (g_players[idx].frostCooldown <= gpGlobals->time) bits |= (1 << 2);
+    bool active = (g_round.state == RS_ACTIVE);
+    bool rHeal  = active && g_players[idx].healCooldown <= gpGlobals->time;
+    bool rAdr   = active && g_players[idx].adrenalineCooldown <= gpGlobals->time;
+    bool rFrost = active && g_players[idx].frostCooldown <= gpGlobals->time;
 
-    if (bits == 0) {
-        hudtextparms_t cd;
-        memset(&cd, 0, sizeof(cd));
-        cd.channel = 0;
-        cd.x = -1;
-        cd.y = 0.3f;
-        cd.r1 = cd.g1 = cd.b1 = 255;
-        cd.a1 = 255;
-        cd.fadeinTime = 0.05f;
-        cd.fadeoutTime = 0.3f;
-        cd.holdTime = 1.0f;
-        UTIL_HudMessage(CBaseEntity::Instance(player), cd, "ALL ABILITIES ON COOLDOWN");
-        return;
-    }
+    int bits = (1 << 3) | (1 << 9); // 4. Buy Menu, 0. Exit
+    if (rHeal)  bits |= (1 << 0);
+    if (rAdr)   bits |= (1 << 1);
+    if (rFrost) bits |= (1 << 2);
 
-    MESSAGE_BEGIN(MSG_ONE, gmsgShowMenu, NULL, player);
-        WRITE_SHORT(bits);
-        WRITE_CHAR(-1);   // display until a key is pressed
-        WRITE_BYTE(1);    // keep the menu up on click
-        WRITE_STRING("HUMAN ABILITIES\n\n1. Heal +50 HP\n2. Adrenaline (6s speed)\n3. Frost Nova (freeze)");
-    MESSAGE_END();
+    char menuText[320];
+    snprintf(menuText, sizeof(menuText),
+        "\\yHuman Menu\\w  (\\y$%d\\w)\n\n"
+        "%s1.%s Heal +50 HP\n"
+        "%s2.%s Adrenaline (6s speed)\n"
+        "%s3.%s Frost Nova (freeze)\n\n"
+        "\\y4.\\w Buy Menu (CS Shop)\n\n"
+        "\\y0.\\w Exit",
+        g_players[idx].money,
+        rHeal  ? "\\y" : "\\d", rHeal  ? "\\w" : "\\d",
+        rAdr   ? "\\y" : "\\d", rAdr   ? "\\w" : "\\d",
+        rFrost ? "\\y" : "\\d", rFrost ? "\\w" : "\\d");
+
+    ZPSendShowMenu(player, bits, 8, menuText);
 
     g_players[idx].menuType = ZPMENU_ABILITY;
-    g_players[idx].abilityMenuUntil = gpGlobals->time + 6.0f;
+    g_players[idx].abilityMenuUntil = gpGlobals->time + 8.0f;
 }
 
 void ZPAbilitySelect(int playerIndex, int slot)
@@ -2449,10 +2487,17 @@ void ZPAbilitySelect(int playerIndex, int slot)
     if (!ZPIsPlayerConnected(ed)) return;
     CBasePlayer* pPlayer = (CBasePlayer*)GET_PRIVATE(ed);
     if (!pPlayer || !pPlayer->IsAlive()) return;
-    if (g_round.state != RS_ACTIVE || !ZPIsHuman(ed)) return;
+    if (!ZPIsHuman(ed)) return;
 
     g_players[playerIndex].menuType = ZPMENU_NONE;
     g_players[playerIndex].abilityMenuUntil = 0;
+
+    if (slot == 10) return;
+    if (slot == 4) {
+        ZPBuyOpen(ed, 0);
+        return;
+    }
+    if (g_round.state != RS_ACTIVE) return;
 
     hudtextparms_t fb;
     memset(&fb, 0, sizeof(fb));
@@ -2718,9 +2763,10 @@ void ZPMapVoteOpen(void) {
             continue;
 
         // the vote takes over this player's menu channel and cancels any
-        // lingering ability menu so the two never interleave on-screen
+        // lingering ability/buy menu so the two never interleave on-screen
         g_players[i].menuType = ZPMENU_VOTE;
         g_players[i].abilityMenuUntil = 0;
+        g_players[i].buyMenuUntil = 0;
 
         MESSAGE_BEGIN(MSG_ONE, gmsgShowMenu, NULL, ed);
             WRITE_SHORT(bits);
@@ -2931,6 +2977,7 @@ void ZPRoundThink(ZPRound* round) {
 
             /* pick + announce the random mode / boss round / event for this round */
             ZPFeaturePreRound(round);
+            ZPBuyAutoOpenPrep();
 
             for (int i = 1; i <= gpGlobals->maxClients; i++) {
                 edict_t* ed = INDEXENT(i);
@@ -3198,6 +3245,7 @@ void ZPRoundThink(ZPRound* round) {
 
         if (gpGlobals->time >= round->resetTime && !g_mapVote.active) {
             bool humansWon = (round->state == RS_HUMANS_WIN);
+            ZPBuyRoundBonus(humansWon);
             round->state = RS_PREP;
             round->countdownStarted = false;
             round->notEnoughPlayersPrinted = false;
@@ -3233,6 +3281,7 @@ void ZPModInit(void) {
     ZPRoundInit(&g_round);
     ZPFeatureInit();
     ZPStatsInit();
+    ZPBuyInit();
     ZPModGrenadeInit();
     ZPSupplyBoxInit();
     ZPMapVoteReset();
@@ -3325,6 +3374,8 @@ void ZPPrecache(void) { // we live in a CRUEL FUCKING WORLD RETARDS..
     PRECACHE_SOUND("items/smallmedkit1.wav");
     PRECACHE_SOUND("items/suitchargeno1.wav");
     PRECACHE_SOUND("items/suitcharge1.wav");
+    PRECACHE_SOUND("items/9mmclip1.wav");
+    PRECACHE_SOUND("items/gunpickup2.wav");
     PRECACHE_SOUND("debris/bustmetal1.wav");
     PRECACHE_SOUND("debris/bustmetal2.wav");
     PRECACHE_SOUND("player/heartbeat1.wav");

@@ -482,6 +482,10 @@ int CBasePlayer::TakeDamage( entvars_t *pevInflictor, entvars_t *pevAttacker, fl
 	// deimos/boss "get angry when shot" passive
 	ZPZombieOnDamaged( edict(), flDamage );
 
+	// classic CS buy menu cash earned from damaging zombies
+	if( pAttacker && pAttacker->IsPlayer() )
+		ZPBuyOnDamage( pAttacker->edict(), edict(), flDamage );
+
 	// Armor. 
 	if( !( pev->flags & FL_GODMODE ) && pev->armorvalue && !( bitsDamageType & ( DMG_FALL | DMG_DROWN ) ) )// armor doesn't protect against fall or drown damage!
 	{

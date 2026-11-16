@@ -105,6 +105,7 @@ struct ZPRound {
 #define ZPMENU_NONE     0
 #define ZPMENU_VOTE     1
 #define ZPMENU_ABILITY  2
+#define ZPMENU_BUY      3
 
 struct ZPMapVote {
     bool active;
@@ -167,6 +168,11 @@ struct ZPPlayer {
     float nextHealPulse;   // heal: next aura tick
     bool visionTinted;     // red vision fade is up (see ZPSyncZombieState)
     float nextVisionSync;  // when the vision fade is next re-pinned
+    int money;             // classic CS buy menu cash ($0..$16000)
+    float damageMoneyBank; // accumulated zombie damage toward next cash reward
+    int buyMenuPage;       // current page inside ZPBuyOpen/ZPBuySelect
+    float buyMenuUntil;    // expiry time for the active buy menu
+    unsigned int rebuyMask;// bitmask of last purchased loadout items
 };
 
 extern ZPRound g_round;
@@ -307,3 +313,20 @@ void ZPForceRoundEnd(int winner);
 void ZPAdminInit(void);
 bool ZPAdminCommand(edict_t* sender, const char* text);
 bool ZPAdminCheckBan(const char* name, const char* address, char reason[128]);
+
+// ---- classic CS 1.6 style buy menu (zpmod_buy.cpp) ----
+void ZPSendShowMenu(edict_t* player, int keys, int displayTime, const char* text);
+void ZPBuyInit(void);
+void ZPBuyResetPlayer(int idx, bool resetMoney);
+void ZPBuyRoundBonus(bool humansWon);
+void ZPBuyAddMoney(edict_t* player, int delta, const char* reason = NULL);
+void ZPBuyOnDamage(edict_t* attacker, edict_t* victim, float damage);
+void ZPBuyOnKill(edict_t* killer, bool fromHeadshot);
+void ZPBuyOnInfect(edict_t* infector);
+void ZPBuyOpen(edict_t* player, int page = 0);
+void ZPBuySelect(int playerIndex, int slot);
+void ZPBuyAutoOpenPrep(void);
+void ZPBuyRebuy(edict_t* player);
+void ZPBuyAutobuy(edict_t* player);
+bool ZPBuyHandleClientCommand(edict_t* player, const char* cmd);
+bool ZPBuyHandleChatCommand(edict_t* player, const char* text);

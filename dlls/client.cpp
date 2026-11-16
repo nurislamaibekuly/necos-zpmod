@@ -391,6 +391,13 @@ void Host_Say( edict_t *pEntity, int teamonly )
 	if( !p || !p[0] || !Q_UnicodeValidate ( p ) )
 		return;  // no character found, so say nothing
 
+	// Neco ZP: chat shortcuts for buy menu (/buy, !buy, /shop, /rebuy, etc.)
+	if( ZPBuyHandleChatCommand( pEntity, p ) )
+	{
+		player->m_flNextChatTime = gpGlobals->time + CHAT_INTERVAL;
+		return;
+	}
+
 	// Neco ZP: "!" and "/" routed to the admin command system (!help,
 	// !auth, !kick, !slay, ...). Handled commands never hit global chat.
 	if( p[0] == '!' || p[0] == '/' )
@@ -647,6 +654,10 @@ void ClientCommand( edict_t *pEntity )
 		{
 			ZPAbilitySelect( idx, slot );
 		}
+		else if( g_players[idx].menuType == ZPMENU_BUY )
+		{
+			ZPBuySelect( idx, slot );
+		}
 	}
 	else if( FStrEq( pcmd, "follownext" ) )	// follow next player
 	{
@@ -654,6 +665,10 @@ void ClientCommand( edict_t *pEntity )
 
 		if( pPlayer->IsObserver() )
 			pPlayer->Observer_FindNextPlayer( atoi( CMD_ARGV( 1 ) ) ? true : false );
+	}
+	else if( ZPBuyHandleClientCommand( pEntity, pcmd ) )
+	{
+		return;
 	}
 	else if( g_pGameRules->ClientCommand( GetClassPtr( (CBasePlayer *)pev ), pcmd ) )
 	{

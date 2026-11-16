@@ -165,6 +165,7 @@ set (SVDLL_SOURCES
 	zombie.cpp
 	zpmod/zpmod.cpp
 	zpmod/zpmod_admin.cpp
+	zpmod/zpmod_buy.cpp
 	zpmod/zpmod_features.cpp
 	zpmod/zpmod_grenades.cpp
 	zpmod/zpmod_stats.cpp
