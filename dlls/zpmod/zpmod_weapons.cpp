@@ -10,6 +10,41 @@
 // sounds, fireBullets & zombie knockback — works natively on vanilla Xash3D)
 // ---------------------------------------------------------------------------
 
+// These weapons run only on the server (UseDecrement stays FALSE). Their
+// weapon timers use absolute server time, even with CLIENT_WEAPONS enabled.
+// The player's shared next-attack timer still uses UTIL_WeaponTimeBase().
+class CSMoEWeapon : public CBasePlayerWeapon
+{
+public:
+	BOOL DefaultDeploy( const char *viewModel, const char *playerModel, int anim, const char *extension, float delay )
+	{
+		if( !CBasePlayerWeapon::DefaultDeploy( viewModel, playerModel, anim, extension ) )
+			return FALSE;
+
+		m_fInSpecialReload = 0;
+		m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + delay;
+		m_flNextPrimaryAttack = m_flNextSecondaryAttack = gpGlobals->time + delay;
+		m_flTimeWeaponIdle = gpGlobals->time + delay;
+		return TRUE;
+	}
+
+	int DefaultReload( int clipSize, int anim, float delay )
+	{
+		if( !CBasePlayerWeapon::DefaultReload( clipSize, anim, delay ) )
+			return FALSE;
+
+		m_flNextPrimaryAttack = m_flNextSecondaryAttack = gpGlobals->time + delay;
+		m_flTimeWeaponIdle = gpGlobals->time + delay;
+		return TRUE;
+	}
+
+	void Holster( int skiplocal = 0 )
+	{
+		m_fInSpecialReload = 0;
+		CBasePlayerWeapon::Holster( skiplocal );
+	}
+};
+
 static void CSMoE_ApplyKnockback( CBaseEntity *pOwner, float force )
 {
 	if( !pOwner || force <= 0.0f ) return;
@@ -52,7 +87,7 @@ enum deagled_e
 	DEAGLED_DRAW
 };
 
-class CWeaponDeagleD : public CBasePlayerWeapon
+class CWeaponDeagleD : public CSMoEWeapon
 {
 public:
 	void Spawn( void );
@@ -119,7 +154,7 @@ int CWeaponDeagleD::AddToPlayer( CBasePlayer *pPlayer )
 
 BOOL CWeaponDeagleD::Deploy( void )
 {
-	return DefaultDeploy( "models/zpmod/v_ddeagle.mdl", "models/zpmod/p_ddeagle.mdl", DEAGLED_DRAW, "onehanded" );
+	return DefaultDeploy( "models/zpmod/v_ddeagle.mdl", "models/zpmod/p_ddeagle.mdl", DEAGLED_DRAW, "onehanded", 1.1f );
 }
 
 void CWeaponDeagleD::PrimaryAttack( void )
@@ -128,11 +163,13 @@ void CWeaponDeagleD::PrimaryAttack( void )
 	{
 		if( m_iClip <= 0 && !m_fFireOnEmpty ) { Reload(); return; }
 		PlayEmptySound();
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.15f;
+		m_flNextPrimaryAttack = gpGlobals->time + 0.15f;
 		return;
 	}
 
 	m_iClip--;
+	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
+	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
 	m_pPlayer->pev->effects |= EF_MUZZLEFLASH;
 	m_pPlayer->SetAnimation( PLAYER_ATTACK1 );
 
@@ -149,26 +186,27 @@ void CWeaponDeagleD::PrimaryAttack( void )
 
 	EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_WEAPON, "weapons/dde-1.wav", 0.9f, ATTN_NORM, 0, RANDOM_LONG( 96, 104 ) );
 	m_pPlayer->pev->punchangle.x -= 2.0f;
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.14f;
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.0f;
+	m_flNextPrimaryAttack = gpGlobals->time + 0.14f;
+	m_flTimeWeaponIdle = gpGlobals->time + 2.0f;
 }
 
 void CWeaponDeagleD::Reload( void )
 {
-	DefaultReload( 28, DEAGLED_RELOAD, 3.8f );
+	DefaultReload( 28, DEAGLED_RELOAD, 4.6f );
 }
 
 void CWeaponDeagleD::WeaponIdle( void )
 {
-	if( m_flTimeWeaponIdle > UTIL_WeaponTimeBase() ) return;
+	ResetEmptySound();
+	if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 	SendWeaponAnim( (m_iClip == 1) ? DEAGLED_IDLE_LEFTEMPTY : DEAGLED_IDLE, 0 );
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 8.0f;
+	m_flTimeWeaponIdle = gpGlobals->time + 8.0f;
 }
 
 // ===========================================================================
 // 2. Dual MP7A1 (weapon_mp7a1d)
 // ===========================================================================
-class CWeaponMP7A1D : public CBasePlayerWeapon
+class CWeaponMP7A1D : public CSMoEWeapon
 {
 public:
 	void Spawn( void );
@@ -234,7 +272,7 @@ int CWeaponMP7A1D::AddToPlayer( CBasePlayer *pPlayer )
 
 BOOL CWeaponMP7A1D::Deploy( void )
 {
-	return DefaultDeploy( "models/zpmod/v_dmp7a1.mdl", "models/zpmod/p_dmp7a1.mdl", DEAGLED_DRAW, "mp5" );
+	return DefaultDeploy( "models/zpmod/v_dmp7a1.mdl", "models/zpmod/p_dmp7a1.mdl", DEAGLED_DRAW, "mp5", 1.3f );
 }
 
 void CWeaponMP7A1D::PrimaryAttack( void )
@@ -243,11 +281,13 @@ void CWeaponMP7A1D::PrimaryAttack( void )
 	{
 		if( m_iClip <= 0 && !m_fFireOnEmpty ) { Reload(); return; }
 		PlayEmptySound();
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.12f;
+		m_flNextPrimaryAttack = gpGlobals->time + 0.12f;
 		return;
 	}
 
 	m_iClip--;
+	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
+	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
 	m_pPlayer->pev->effects |= EF_MUZZLEFLASH;
 	m_pPlayer->SetAnimation( PLAYER_ATTACK1 );
 
@@ -262,8 +302,8 @@ void CWeaponMP7A1D::PrimaryAttack( void )
 
 	EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_WEAPON, "weapons/dmp7-1.wav", 0.8f, ATTN_NORM, 0, RANDOM_LONG( 97, 105 ) );
 	m_pPlayer->pev->punchangle.x -= 0.7f;
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.072f;
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.0f;
+	m_flNextPrimaryAttack = gpGlobals->time + 0.072f;
+	m_flTimeWeaponIdle = gpGlobals->time + 2.0f;
 }
 
 void CWeaponMP7A1D::Reload( void )
@@ -273,9 +313,10 @@ void CWeaponMP7A1D::Reload( void )
 
 void CWeaponMP7A1D::WeaponIdle( void )
 {
-	if( m_flTimeWeaponIdle > UTIL_WeaponTimeBase() ) return;
+	ResetEmptySound();
+	if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 	SendWeaponAnim( DEAGLED_IDLE, 0 );
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 8.0f;
+	m_flTimeWeaponIdle = gpGlobals->time + 8.0f;
 }
 
 // ===========================================================================
@@ -295,7 +336,7 @@ enum m1887_e
 	M1887_DRAW
 };
 
-class CWeaponM1887 : public CBasePlayerWeapon
+class CWeaponM1887 : public CSMoEWeapon
 {
 public:
 	void Spawn( void );
@@ -306,8 +347,6 @@ public:
 	void PrimaryAttack( void );
 	void Reload( void );
 	void WeaponIdle( void );
-private:
-	float m_flNextReload;
 };
 
 LINK_ENTITY_TO_CLASS( weapon_m1887, CWeaponM1887 )
@@ -364,7 +403,7 @@ int CWeaponM1887::AddToPlayer( CBasePlayer *pPlayer )
 
 BOOL CWeaponM1887::Deploy( void )
 {
-	return DefaultDeploy( "models/zpmod/v_m1887.mdl", "models/zpmod/p_m1887.mdl", M1887_DRAW, "shotgun" );
+	return DefaultDeploy( "models/zpmod/v_m1887.mdl", "models/zpmod/p_m1887.mdl", M1887_DRAW, "shotgun", 1.0f );
 }
 
 void CWeaponM1887::PrimaryAttack( void )
@@ -373,11 +412,13 @@ void CWeaponM1887::PrimaryAttack( void )
 	{
 		if( m_iClip <= 0 && !m_fFireOnEmpty ) { Reload(); return; }
 		PlayEmptySound();
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.15f;
+		m_flNextPrimaryAttack = gpGlobals->time + 0.15f;
 		return;
 	}
 
 	m_iClip--;
+	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
+	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
 	m_fInSpecialReload = 0;
 	m_pPlayer->pev->effects |= EF_MUZZLEFLASH;
 	m_pPlayer->SetAnimation( PLAYER_ATTACK1 );
@@ -391,15 +432,15 @@ void CWeaponM1887::PrimaryAttack( void )
 	SendWeaponAnim( M1887_FIRE1 + RANDOM_LONG( 0, 4 ), 0 );
 	EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_WEAPON, "weapons/m1887-1.wav", 0.95f, ATTN_NORM, 0, RANDOM_LONG( 96, 104 ) );
 	m_pPlayer->pev->punchangle.x -= 4.5f;
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.70f;
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.0f;
+	m_flNextPrimaryAttack = gpGlobals->time + 0.70f;
+	m_flTimeWeaponIdle = gpGlobals->time + 2.0f;
 }
 
 void CWeaponM1887::Reload( void )
 {
 	if( m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] <= 0 || m_iClip == 8 )
 		return;
-	if( m_flNextPrimaryAttack > UTIL_WeaponTimeBase() )
+	if( m_flNextPrimaryAttack > gpGlobals->time )
 		return;
 
 	if( m_fInSpecialReload == 0 )
@@ -407,19 +448,20 @@ void CWeaponM1887::Reload( void )
 		SendWeaponAnim( M1887_START_RELOAD, 0 );
 		m_fInSpecialReload = 1;
 		m_pPlayer->m_flNextAttack = UTIL_WeaponTimeBase() + 0.55f;
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 0.55f;
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.6f;
+		m_flTimeWeaponIdle = gpGlobals->time + 0.55f;
+		m_flNextPrimaryAttack = gpGlobals->time + 0.6f;
 	}
 	else if( m_fInSpecialReload == 1 )
 	{
-		if( m_flTimeWeaponIdle > UTIL_WeaponTimeBase() ) return;
+		if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 		m_fInSpecialReload = 2;
 		SendWeaponAnim( M1887_RELOAD, 0 );
-		m_flNextReload = UTIL_WeaponTimeBase() + 0.45f;
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 0.45f;
+		m_flTimeWeaponIdle = gpGlobals->time + 0.45f;
 	}
 	else
 	{
+		// Holding reload calls this every frame; finish only after insertion.
+		if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 		m_iClip++;
 		m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType]--;
 		m_fInSpecialReload = 1;
@@ -428,7 +470,8 @@ void CWeaponM1887::Reload( void )
 
 void CWeaponM1887::WeaponIdle( void )
 {
-	if( m_flTimeWeaponIdle > UTIL_WeaponTimeBase() ) return;
+	ResetEmptySound();
+	if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 
 	if( m_iClip == 0 && m_fInSpecialReload == 0 && m_pPlayer->m_rgAmmo[m_iPrimaryAmmoType] )
 	{
@@ -445,13 +488,14 @@ void CWeaponM1887::WeaponIdle( void )
 			SendWeaponAnim( M1887_AFTER_RELOAD, 0 );
 			EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_ITEM, "weapons/m1887_reafter.wav", 0.85f, ATTN_NORM, 0, 100 );
 			m_fInSpecialReload = 0;
-			m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 1.5f;
+			m_flNextPrimaryAttack = gpGlobals->time + 0.95f;
+			m_flTimeWeaponIdle = gpGlobals->time + 0.95f;
 		}
 	}
 	else
 	{
 		SendWeaponAnim( M1887_IDLE, 0 );
-		m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 6.0f;
+		m_flTimeWeaponIdle = gpGlobals->time + 6.0f;
 	}
 }
 
@@ -467,7 +511,7 @@ enum thompson_e
 	THOMPSON_DRAW
 };
 
-class CWeaponThompson : public CBasePlayerWeapon
+class CWeaponThompson : public CSMoEWeapon
 {
 public:
 	void Spawn( void );
@@ -533,7 +577,7 @@ int CWeaponThompson::AddToPlayer( CBasePlayer *pPlayer )
 
 BOOL CWeaponThompson::Deploy( void )
 {
-	return DefaultDeploy( "models/zpmod/v_thompson.mdl", "models/zpmod/p_thompson.mdl", THOMPSON_DRAW, "mp5" );
+	return DefaultDeploy( "models/zpmod/v_thompson.mdl", "models/zpmod/p_thompson.mdl", THOMPSON_DRAW, "mp5", 1.0f );
 }
 
 void CWeaponThompson::PrimaryAttack( void )
@@ -542,11 +586,13 @@ void CWeaponThompson::PrimaryAttack( void )
 	{
 		if( m_iClip <= 0 && !m_fFireOnEmpty ) { Reload(); return; }
 		PlayEmptySound();
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.15f;
+		m_flNextPrimaryAttack = gpGlobals->time + 0.15f;
 		return;
 	}
 
 	m_iClip--;
+	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
+	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
 	m_pPlayer->pev->effects |= EF_MUZZLEFLASH;
 	m_pPlayer->SetAnimation( PLAYER_ATTACK1 );
 
@@ -559,20 +605,21 @@ void CWeaponThompson::PrimaryAttack( void )
 	SendWeaponAnim( (m_iClip & 1) ? THOMPSON_SHOOT1 : THOMPSON_SHOOT2, 0 );
 	EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_WEAPON, "weapons/thompsongold-1.wav", 0.85f, ATTN_NORM, 0, RANDOM_LONG( 97, 104 ) );
 	m_pPlayer->pev->punchangle.x -= 1.0f;
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.095f;
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.0f;
+	m_flNextPrimaryAttack = gpGlobals->time + 0.095f;
+	m_flTimeWeaponIdle = gpGlobals->time + 2.0f;
 }
 
 void CWeaponThompson::Reload( void )
 {
-	DefaultReload( 50, THOMPSON_RELOAD, 3.4f );
+	DefaultReload( 50, THOMPSON_RELOAD, 3.7f );
 }
 
 void CWeaponThompson::WeaponIdle( void )
 {
-	if( m_flTimeWeaponIdle > UTIL_WeaponTimeBase() ) return;
+	ResetEmptySound();
+	if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 	SendWeaponAnim( THOMPSON_IDLE, 0 );
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 6.0f;
+	m_flTimeWeaponIdle = gpGlobals->time + 6.0f;
 }
 
 // ===========================================================================
@@ -588,7 +635,7 @@ enum as50_e
 	AS50_DRAW
 };
 
-class CWeaponAS50 : public CBasePlayerWeapon
+class CWeaponAS50 : public CSMoEWeapon
 {
 public:
 	void Spawn( void );
@@ -601,8 +648,6 @@ public:
 	void SecondaryAttack( void );
 	void Reload( void );
 	void WeaponIdle( void );
-private:
-	BOOL m_fInZoom;
 };
 
 LINK_ENTITY_TO_CLASS( weapon_as50, CWeaponAS50 )
@@ -661,38 +706,34 @@ int CWeaponAS50::AddToPlayer( CBasePlayer *pPlayer )
 
 BOOL CWeaponAS50::Deploy( void )
 {
-	return DefaultDeploy( "models/zpmod/v_as50.mdl", "models/zpmod/p_as50.mdl", AS50_DRAW, "bow" );
+	return DefaultDeploy( "models/zpmod/v_as50.mdl", "models/zpmod/p_as50.mdl", AS50_DRAW, "bow", 1.0f );
 }
 
 void CWeaponAS50::Holster( int skiplocal )
 {
 	if( m_pPlayer && m_pPlayer->m_iFOV != 0 )
 	{
-		m_fInZoom = FALSE;
 		m_pPlayer->pev->fov = m_pPlayer->m_iFOV = 0;
 	}
-	CBasePlayerWeapon::Holster( skiplocal );
+	CSMoEWeapon::Holster( skiplocal );
 }
 
 void CWeaponAS50::SecondaryAttack( void )
 {
 	if( m_pPlayer->m_iFOV == 0 )
 	{
-		m_fInZoom = TRUE;
 		m_pPlayer->pev->fov = m_pPlayer->m_iFOV = 38;
 	}
 	else if( m_pPlayer->m_iFOV == 38 )
 	{
-		m_fInZoom = TRUE;
 		m_pPlayer->pev->fov = m_pPlayer->m_iFOV = 14;
 	}
 	else
 	{
-		m_fInZoom = FALSE;
 		m_pPlayer->pev->fov = m_pPlayer->m_iFOV = 0;
 	}
 	EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_ITEM, "weapons/zoom.wav", 0.3f, ATTN_NORM, 0, 100 );
-	m_flNextSecondaryAttack = UTIL_WeaponTimeBase() + 0.3f;
+	m_flNextSecondaryAttack = gpGlobals->time + 0.3f;
 }
 
 void CWeaponAS50::PrimaryAttack( void )
@@ -701,11 +742,13 @@ void CWeaponAS50::PrimaryAttack( void )
 	{
 		if( m_iClip <= 0 && !m_fFireOnEmpty ) { Reload(); return; }
 		PlayEmptySound();
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.2f;
+		m_flNextPrimaryAttack = gpGlobals->time + 0.2f;
 		return;
 	}
 
 	m_iClip--;
+	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
+	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
 	m_pPlayer->pev->effects |= EF_MUZZLEFLASH;
 	m_pPlayer->SetAnimation( PLAYER_ATTACK1 );
 
@@ -719,25 +762,25 @@ void CWeaponAS50::PrimaryAttack( void )
 	SendWeaponAnim( AS50_SHOOT1 + RANDOM_LONG( 0, 2 ), 0 );
 	EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_WEAPON, "weapons/as50-1.wav", 0.95f, ATTN_NORM, 0, RANDOM_LONG( 97, 103 ) );
 	m_pPlayer->pev->punchangle.x -= 4.0f;
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.45f;
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.5f;
+	m_flNextPrimaryAttack = gpGlobals->time + 0.45f;
+	m_flTimeWeaponIdle = gpGlobals->time + 2.5f;
 }
 
 void CWeaponAS50::Reload( void )
 {
+	if( !DefaultReload( 5, AS50_RELOAD, 3.0f ) ) return;
 	if( m_pPlayer->m_iFOV != 0 )
 	{
-		m_fInZoom = FALSE;
 		m_pPlayer->pev->fov = m_pPlayer->m_iFOV = 0;
 	}
-	DefaultReload( 5, AS50_RELOAD, 3.0f );
 }
 
 void CWeaponAS50::WeaponIdle( void )
 {
-	if( m_flTimeWeaponIdle > UTIL_WeaponTimeBase() ) return;
+	ResetEmptySound();
+	if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 	SendWeaponAnim( AS50_IDLE, 0 );
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 6.0f;
+	m_flTimeWeaponIdle = gpGlobals->time + 6.0f;
 }
 
 // ===========================================================================
@@ -752,7 +795,7 @@ enum mg3_e
 	MG3_DRAW
 };
 
-class CWeaponMG3 : public CBasePlayerWeapon
+class CWeaponMG3 : public CSMoEWeapon
 {
 public:
 	void Spawn( void );
@@ -820,7 +863,7 @@ int CWeaponMG3::AddToPlayer( CBasePlayer *pPlayer )
 
 BOOL CWeaponMG3::Deploy( void )
 {
-	return DefaultDeploy( "models/zpmod/v_mg3.mdl", "models/zpmod/p_mg3.mdl", MG3_DRAW, "mp5" );
+	return DefaultDeploy( "models/zpmod/v_mg3.mdl", "models/zpmod/p_mg3.mdl", MG3_DRAW, "mp5", 1.0f );
 }
 
 void CWeaponMG3::PrimaryAttack( void )
@@ -829,11 +872,13 @@ void CWeaponMG3::PrimaryAttack( void )
 	{
 		if( m_iClip <= 0 && !m_fFireOnEmpty ) { Reload(); return; }
 		PlayEmptySound();
-		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.15f;
+		m_flNextPrimaryAttack = gpGlobals->time + 0.15f;
 		return;
 	}
 
 	m_iClip--;
+	m_pPlayer->m_iWeaponVolume = LOUD_GUN_VOLUME;
+	m_pPlayer->m_iWeaponFlash = NORMAL_GUN_FLASH;
 	m_pPlayer->pev->effects |= EF_MUZZLEFLASH;
 	m_pPlayer->SetAnimation( PLAYER_ATTACK1 );
 
@@ -846,18 +891,19 @@ void CWeaponMG3::PrimaryAttack( void )
 	SendWeaponAnim( (m_iClip & 1) ? MG3_SHOOT1 : MG3_SHOOT2, 0 );
 	EMIT_SOUND_DYN( ENT( m_pPlayer->pev ), CHAN_WEAPON, "weapons/mg3-1.wav", 0.85f, ATTN_NORM, 0, RANDOM_LONG( 97, 103 ) );
 	m_pPlayer->pev->punchangle.x -= 0.9f;
-	m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.088f;
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 2.0f;
+	m_flNextPrimaryAttack = gpGlobals->time + 0.088f;
+	m_flTimeWeaponIdle = gpGlobals->time + 2.0f;
 }
 
 void CWeaponMG3::Reload( void )
 {
-	DefaultReload( 200, MG3_RELOAD, 4.5f );
+	DefaultReload( 200, MG3_RELOAD, 4.7f );
 }
 
 void CWeaponMG3::WeaponIdle( void )
 {
-	if( m_flTimeWeaponIdle > UTIL_WeaponTimeBase() ) return;
+	ResetEmptySound();
+	if( m_flTimeWeaponIdle > gpGlobals->time ) return;
 	SendWeaponAnim( MG3_IDLE1, 0 );
-	m_flTimeWeaponIdle = UTIL_WeaponTimeBase() + 6.0f;
+	m_flTimeWeaponIdle = gpGlobals->time + 6.0f;
 }

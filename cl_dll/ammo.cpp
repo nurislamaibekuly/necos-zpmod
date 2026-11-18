@@ -567,7 +567,11 @@ int CHudAmmo::MsgFunc_CurWeapon( const char *pszName, int iSize, void *pbuf )
 
 	int iState = READ_BYTE();
 	int iId = READ_CHAR();
-	int iClip = READ_CHAR();
+	// Clips may hold more than 127 rounds (e.g. the MG3). Only 255 is
+	// the no-clip sentinel; interpreting other high values as signed flips
+	// the displayed count as the player fires.
+	int iClip = READ_BYTE();
+	if( iClip == 255 ) iClip = -1;
 
 	// detect if we're also on target
 	if( iState > 1 )
@@ -600,10 +604,7 @@ int CHudAmmo::MsgFunc_CurWeapon( const char *pszName, int iSize, void *pbuf )
 	if( !pWeapon )
 		return 0;
 
-	if( iClip < -1 )
-		pWeapon->iClip = abs( iClip );
-	else
-		pWeapon->iClip = iClip;
+	pWeapon->iClip = iClip;
 
 	if( iState == 0 )	// we're not the current weapon, so update no more
 		return 1;

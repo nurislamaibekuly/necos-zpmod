@@ -131,7 +131,7 @@ public:
 #define _46MM_MAX_CARRY			240
 #define _45ACP_MAX_CARRY		200
 #define _50BMG_MAX_CARRY		30
-#define _556NATO_MAX_CARRY		400
+#define _556NATO_MAX_CARRY		250	// AmmoX/WeaponList carry counts are one byte
 #define SATCHEL_MAX_CARRY		5
 #define TRIPMINE_MAX_CARRY		5
 #define SNARK_MAX_CARRY			15
